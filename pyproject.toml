@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "apple-ecosystem-mcp"
+version = "0.1.0"
+description = "MCP server for Apple Mail, Calendar, Contacts, Reminders, and iCloud Drive — the missing half of Claude's Apple ecosystem integration."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+  "fastmcp>=3.2,<4",
+  "mcp>=1",
+]
+keywords = ["mcp", "apple", "macos", "mail", "calendar", "contacts", "reminders"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Operating System :: MacOS",
+  "License :: OSI Approved :: MIT License",
+]
+authors = [
+  { name = "Abhinav Agrawal", email = "abhinavag@icloud.com" }
+]
+
+[project.urls]
+Homepage = "https://github.com/abhinavagrawal/apple-ecosystem-mcp"
+Repository = "https://github.com/abhinavagrawal/apple-ecosystem-mcp"
+
+[project.scripts]
+apple-ecosystem-mcp = "apple_ecosystem_mcp.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/apple_ecosystem_mcp"]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-mock>=3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --strict-markers"

@@ -1,0 +1,90 @@
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+npm-debug.log*
+yarn-error.log*
+
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+.env.production
+.env.test
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.sublime-project
+.sublime-workspace
+*.code-workspace
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+
+# Test coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Logs
+logs/
+*.log
+lerna-debug.log*
+
+# Cache
+.cache/
+.eslintcache
+.parcel-cache
+.jest-cache
+.turbo/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+.trash/
+
+# Node-specific
+.npm
+.node-gyp
+*.node
+
+# VSCode workspace settings (but keep settings.json for project)
+.vscode/settings.json.local
+
+# MCP Server runtime
+*.sock
+.claude-session/
+
+# Local development
+.env.development.local
+.env.test.local
+
+# Git
+.git-aliases-local

@@ -1,0 +1,32 @@
+# Git Aliases for Apple Ecosystem MCP
+#
+# Add these to your local git config:
+#
+# git config --local alias.ca 'commit --all -m'
+# git config --local alias.l 'log --oneline -10'
+# git config --local alias.d 'diff'
+# git config --local alias.s 'status --short'
+# git config --local alias.check '!npm run typecheck && npm run lint && npm run test'
+#
+# Or copy the script below and run it:
+# bash .git-aliases --install
+
+#!/bin/bash
+
+if [[ "$1" == "--install" ]]; then
+  git config --local alias.ca 'commit --all -m'
+  git config --local alias.l 'log --oneline -10'
+  git config --local alias.d 'diff'
+  git config --local alias.s 'status --short'
+  git config --local alias.check '!npm run typecheck && npm run lint && npm run test'
+  echo "✓ Git aliases installed (local config)"
+  echo ""
+  echo "Usage:"
+  echo "  git ca \"message\"     # commit all with message"
+  echo "  git l                 # last 10 commits"
+  echo "  git d                 # show diff"
+  echo "  git s                 # short status"
+  echo "  git check             # run full validation suite"
+else
+  cat "$0"
+fi

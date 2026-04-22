@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "apple-ecosystem": {
+      "command": "node",
+      "args": ["dist/index.js"],
+      "description": "Apple Ecosystem MCP Server — IAM, iCloud, iTunes, App Store, Health",
+      "env": {
+        "NODE_ENV": "production",
+        "DEBUG": ""
+      }
+    }
+  }
+}
