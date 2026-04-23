@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "apple-ecosystem-mcp",
   "display_name": "Apple Ecosystem",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "MCP server for Apple Mail, Calendar, Contacts, Reminders, and iCloud Drive",
   "author": {
     "name": "Abhinav Agrawal"
