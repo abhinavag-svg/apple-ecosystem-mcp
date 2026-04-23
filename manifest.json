@@ -16,7 +16,7 @@
     "entry_point": "server/runner.py",
     "mcp_config": {
       "command": "uvx",
-      "args": ["apple-ecosystem-mcp"]
+      "args": ["--refresh-package", "apple-ecosystem-mcp", "apple-ecosystem-mcp@0.1.1"]
     }
   },
   "compatibility": {
