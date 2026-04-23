@@ -65,9 +65,13 @@ on run argv
     set output to "["
     set firstItem to true
     tell application "Mail"
-        repeat with acct in accounts
+        set acctCount to count of accounts
+        repeat with acctIdx from 1 to acctCount
+            set acct to account acctIdx
             set acctName to name of acct
-            repeat with mb in mailboxes of acct
+            set mbCount to count of mailboxes of acct
+            repeat with mbIdx from 1 to mbCount
+                set mb to mailbox mbIdx of acct
                 if not firstItem then set output to output & ","
                 set firstItem to false
                 set mbName to name of mb
