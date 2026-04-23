@@ -136,7 +136,17 @@ on run argv
         repeat with acct in accounts
             set acctName to name of acct
             repeat with mb in mailboxes of acct
-                if mbId is "" or (id of mb as string) is mbId then
+                set shouldSearch to false
+                if mbId is "" then
+                    set shouldSearch to true
+                else
+                    try
+                        if (id of mb as string) is mbId then
+                            set shouldSearch to true
+                        end if
+                    end try
+                end if
+                if shouldSearch then
                     set msgs to (messages of mb whose subject contains qry)
                     repeat with msg in msgs
                         if count_ ≥ lim then exit repeat
