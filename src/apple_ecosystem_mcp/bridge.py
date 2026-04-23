@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Iterable
@@ -12,9 +14,33 @@ _logger = logging.getLogger("apple_ecosystem_mcp.bridge")
 _logger.propagate = False
 if not _logger.handlers:
     # DEBUG-only file logging; never emit sensitive stderr to stdout/stderr.
-    log_path = Path.cwd() / ".claude" / "debug.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(log_path)
+    #
+    # IMPORTANT: In Claude Desktop / MCPB bundles, the process CWD may be a
+    # read-only directory (sometimes even "/"). Logging must never prevent the
+    # server from starting.
+    candidates: list[Path] = []
+
+    env_path = os.environ.get("APPLE_ECOSYSTEM_MCP_LOG_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+
+    if os.name == "posix":
+        candidates.append(Path.home() / "Library" / "Logs" / "apple-ecosystem-mcp" / "debug.log")
+        candidates.append(Path.home() / ".cache" / "apple-ecosystem-mcp" / "debug.log")
+    candidates.append(Path(tempfile.gettempdir()) / "apple-ecosystem-mcp-debug.log")
+
+    handler: logging.Handler | None = None
+    for log_path in candidates:
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(log_path)
+            break
+        except OSError:
+            continue
+
+    if handler is None:
+        handler = logging.NullHandler()
+
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     _logger.addHandler(handler)

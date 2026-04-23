@@ -26,39 +26,52 @@ _SEARCH_SCRIPT = r"""
 on run argv
     set q to item 1 of argv
     set lim to (item 2 of argv) as integer
+    if q is "" then return "[]"
     set output to {}
     tell application "Contacts"
-        set matches to (every person whose (name contains q) or (organization contains q))
-        set nmatches to count of matches
-        if nmatches > lim then set nmatches to lim
-        repeat with i from 1 to nmatches
-            set p to item i of matches
+        set count_ to 0
+        repeat with p in people
+            if count_ ≥ lim then exit repeat
             set pid to id of p
             set pfirst to ""
             try
-                set pfirst to first name of p
+                set pfirst to first name of p as string
             end try
             set plast to ""
             try
-                set plast to last name of p
+                set plast to last name of p as string
             end try
             set porg to ""
             try
-                set porg to organization of p
+                set porg to organization of p as string
             end try
             set pemail to ""
             try
-                if (count of emails of p) > 0 then set pemail to value of first email of p
+                if (count of emails of p) > 0 then set pemail to value of first email of p as string
             end try
             set pphone to ""
             try
-                if (count of phones of p) > 0 then set pphone to value of first phone of p
+                if (count of phones of p) > 0 then set pphone to value of first phone of p as string
             end try
-            set end of output to {pid, pfirst, plast, pemail, pphone, porg}
+
+            if my containsCI(pfirst, q) or my containsCI(plast, q) or my containsCI((pfirst & " " & plast), q) or my containsCI(porg, q) or my containsCI(pemail, q) or my containsCI(pphone, q) then
+                set end of output to {pid, pfirst, plast, pemail, pphone, porg}
+                set count_ to count_ + 1
+            end if
         end repeat
     end tell
     return my jsonify(output)
 end run
+
+on containsCI(hay, needle)
+    try
+        ignoring case
+            return ((hay as string) contains (needle as string))
+        end ignoring
+    on error
+        return false
+    end try
+end containsCI
 
 on jsonify(rows)
     set out to "["

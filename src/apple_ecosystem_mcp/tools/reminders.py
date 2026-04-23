@@ -17,12 +17,18 @@ def _nn(value):
     return value
 
 
-def _validate_iso(due: str) -> str:
+def _normalize_due_iso(due: str) -> str:
+    """Normalize ISO 8601 input into local naive `YYYY-MM-DDTHH:MM:SS` for AppleScript."""
+    if due.endswith("Z"):
+        due = due[:-1] + "+00:00"
     try:
-        datetime.fromisoformat(due)
+        dt = datetime.fromisoformat(due)
     except ValueError as e:
         raise RuntimeError(f"Invalid ISO 8601 datetime: {due}") from e
-    return due
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    # AppleScript parser expects seconds.
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 _LISTS_SCRIPT = r"""
@@ -83,7 +89,16 @@ on run argv
         if list_name is "" then
             set target_reminders to reminders
         else
-            set target_list to list list_name
+            set target_list to missing value
+            repeat with l in lists
+                if (name of l as string) is list_name then
+                    set target_list to l
+                    exit repeat
+                end if
+            end repeat
+            if target_list is missing value then
+                return "[]"
+            end if
             set target_reminders to reminders of target_list
         end if
         repeat with r in target_reminders
@@ -172,10 +187,23 @@ on run argv
     set r_notes to item 4 of argv
     set r_prio to (item 5 of argv) as integer
     tell application "Reminders"
-        set target_list to list r_list
+        set target_list to missing value
+        if r_list is "" then
+            if (count of lists) = 0 then error "No reminder lists available" number 404
+            set target_list to item 1 of lists
+        else
+            repeat with l in lists
+                if (name of l as string) is r_list then
+                    set target_list to l
+                    exit repeat
+                end if
+            end repeat
+        end if
+        if target_list is missing value then error "List not found" number 404
+
         set props to {name:r_title}
-        if r_notes is not "" then set props to props & {body:r_notes}
-        if r_prio is not 0 then set props to props & {priority:r_prio}
+        if r_notes is not "" then set body of props to r_notes
+        if r_prio is not 0 then set priority of props to r_prio
         set new_r to make new reminder at end of reminders of target_list with properties props
         if r_due is not "" then
             set due date of new_r to my parse_iso(r_due)
@@ -186,10 +214,12 @@ on run argv
 end run
 
 on parse_iso(s)
-    -- Parse "YYYY-MM-DDTHH:MM:SS" into AppleScript date
+    -- Parse "YYYY-MM-DDTHH:MM:SS" into an AppleScript date in local time.
     set the_date to current date
     set year of the_date to (text 1 thru 4 of s) as integer
-    set month of the_date to (text 6 thru 7 of s) as integer
+    set monthNum to (text 6 thru 7 of s) as integer
+    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of the_date to item monthNum of months
     set day of the_date to (text 9 thru 10 of s) as integer
     if (count of s) >= 19 then
         set hours of the_date to (text 12 thru 13 of s) as integer
@@ -272,22 +302,33 @@ def reminders_list(list_name: str | None = None, completed: bool = False) -> lis
 @mcp.tool()
 def reminders_create(
     title: str,
-    list_name: str = "Reminders",
+    list_name: str | None = None,
     due: str | None = None,
     notes: str | None = None,
     priority: int = 0,
 ) -> dict:
     """Create a reminder."""
+    if list_name:
+        try:
+            known = reminders_lists()
+        except RuntimeError:
+            known = []
+        if known and list_name not in known:
+            raise RuntimeError(
+                f"Unknown Reminders list: {list_name}. Call reminders_lists() to view available lists."
+            )
+
     due_str = ""
     if due:
-        due_str = _validate_iso(due)
+        due_str = _normalize_due_iso(due)
+    priority = max(0, min(int(priority), 9))
     rid = run_applescript(
         _CREATE_SCRIPT,
         title,
-        list_name,
+        list_name or "",
         due_str,
         notes or "",
-        str(int(priority)),
+        str(priority),
     )
     return {"id": rid, "success": True}
 

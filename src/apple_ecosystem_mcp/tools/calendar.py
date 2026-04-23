@@ -163,7 +163,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set month of d to mo
+    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of months
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d
@@ -239,8 +240,8 @@ on run argv
             set targetCal to first calendar whose uid is calUID
         end if
         set props to {summary:titleText, start date:startDate, end date:endDate}
-        if loc is not "" then set props to props & {location:loc}
-        if notesText is not "" then set props to props & {description:notesText}
+        if loc is not "" then set location of props to loc
+        if notesText is not "" then set description of props to notesText
         set newEv to make new event at end of events of targetCal with properties props
         if inviteesCSV is not "" then
             set AppleScript's text item delimiters to ","
@@ -274,7 +275,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set month of d to mo
+    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of months
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d
@@ -338,7 +340,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set month of d to mo
+    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of months
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d

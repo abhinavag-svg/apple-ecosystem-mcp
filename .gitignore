@@ -51,6 +51,10 @@ lerna-debug.log*
 .jest-cache
 .turbo/
 
+# Python
+__pycache__/
+*.pyc
+
 # Temporary files
 tmp/
 temp/

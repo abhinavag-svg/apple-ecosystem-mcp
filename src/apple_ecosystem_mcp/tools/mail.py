@@ -100,6 +100,18 @@ on jsonString(s)
     set parts to text items of t
     set AppleScript's text item delimiters to "\\\""
     set t to parts as string
+    set AppleScript's text item delimiters to return
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to linefeed
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to tab
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\t"
+    set t to parts as string
     set AppleScript's text item delimiters to ""
     return "\"" & t & "\""
 end jsonString
@@ -128,6 +140,10 @@ on run argv
     set limitStr to item 4 of argv
     set lim to (limitStr as integer)
 
+    if qry is "" then
+        return "[]"
+    end if
+
     set output to "["
     set firstItem to true
     set count_ to 0
@@ -145,30 +161,82 @@ on run argv
                             set shouldSearch to true
                         end if
                     end try
+                    if shouldSearch is false then
+                        try
+                            if (name of mb as string) is mbId then
+                                set shouldSearch to true
+                            end if
+                        end try
+                    end if
                 end if
                 if shouldSearch then
-                    set msgs to (messages of mb whose subject contains qry)
-                    repeat with msg in msgs
+                    set msgList to {}
+                    set mCount to 0
+                    try
+                        set msgList to messages of mb
+                        set mCount to count of msgList
+                    end try
+
+                    set scanLim to mCount
+                    if scanLim > 5000 then set scanLim to 5000
+
+                    repeat with offset_ from 0 to (scanLim - 1)
                         if count_ ≥ lim then exit repeat
-                        set msgDate to (date received of msg) as «class isot» as string
-                        if sinceStr is "" or msgDate ≥ sinceStr then
-                            set snd to sender of msg
-                            set subj to subject of msg
-                            set mid to id of msg
-                            set bodyText to ""
+                        set idx_ to (mCount - offset_)
+                        if idx_ < 1 then exit repeat
+
+                        set msg to missing value
+                        try
+                            set msg to item idx_ of msgList
+                        end try
+                        if msg is missing value then
+                            -- Skip invalid/unavailable message references.
+                        else
+
+                            set subj to ""
                             try
-                                set bodyText to content of msg
+                                set subj to subject of msg as string
                             end try
-                            if (length of bodyText) > 200 then
-                                set preview to text 1 thru 200 of bodyText
-                            else
-                                set preview to bodyText
+                            if subj is "" then
+                                -- Skip messages with no subject.
+                            else if my containsCI(subj, qry) then
+                                set msgDate to ""
+                                try
+                                    set msgDate to (date received of msg) as «class isot» as string
+                                end try
+                                if sinceStr is "" or (msgDate is not "" and msgDate ≥ sinceStr) then
+                                    set snd to ""
+                                    try
+                                        set snd to sender of msg as string
+                                    end try
+                                    set mid to ""
+                                    try
+                                        set mid to message id of msg as string
+                                    end try
+                                    set internalId to ""
+                                    try
+                                        set internalId to id of msg as string
+                                    end try
+                                    if mid is "" then set mid to internalId
+                                    set bodyText to ""
+                                    try
+                                        set bodyText to content of msg
+                                    end try
+                                    if (length of bodyText) > 200 then
+                                        set preview to text 1 thru 200 of bodyText
+                                    else
+                                        set preview to bodyText
+                                    end if
+                                    set thisMbId to ""
+                                    try
+                                        set thisMbId to id of mb as string
+                                    end try
+                                    if not firstItem then set output to output & ","
+                                    set firstItem to false
+                                    set output to output & "{\"id\":" & my jsonString(mid) & ",\"internal_id\":" & my jsonString(internalId) & ",\"subject\":" & my jsonString(subj) & ",\"sender\":" & my jsonString(snd) & ",\"date\":" & my jsonString(msgDate) & ",\"preview\":" & my jsonString(preview) & ",\"mailbox_id\":" & my jsonString(thisMbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
+                                    set count_ to count_ + 1
+                                end if
                             end if
-                            set thisMbId to id of mb as string
-                            if not firstItem then set output to output & ","
-                            set firstItem to false
-                            set output to output & "{\"id\":" & my jsonString(mid) & ",\"subject\":" & my jsonString(subj) & ",\"sender\":" & my jsonString(snd) & ",\"date\":" & my jsonString(msgDate) & ",\"preview\":" & my jsonString(preview) & ",\"mailbox_id\":" & my jsonString(thisMbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
-                            set count_ to count_ + 1
                         end if
                     end repeat
                     if count_ ≥ lim then exit repeat
@@ -180,6 +248,16 @@ on run argv
     return output & "]"
 end run
 
+on containsCI(hay, needle)
+    try
+        ignoring case
+            return (hay contains needle)
+        end ignoring
+    on error
+        return false
+    end try
+end containsCI
+
 on jsonString(s)
     if s is missing value then return "null"
     set t to s as string
@@ -190,6 +268,18 @@ on jsonString(s)
     set AppleScript's text item delimiters to "\""
     set parts to text items of t
     set AppleScript's text item delimiters to "\\\""
+    set t to parts as string
+    set AppleScript's text item delimiters to return
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to linefeed
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to tab
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\t"
     set t to parts as string
     set AppleScript's text item delimiters to ""
     return "\"" & t & "\""
@@ -205,6 +295,7 @@ def mail_search(
     since: str | None = None,
 ) -> list[dict]:
     """Search Mail messages; returns canonical ids, capped at 100 results."""
+    query = (query or "").strip()
     capped = max(1, min(int(limit), _MAIL_SEARCH_MAX))
     raw = run_applescript(
         _SEARCH_SCRIPT,
@@ -237,15 +328,21 @@ on run argv
         set acctName to ""
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
+                set candidates to {}
                 try
-                    set candidates to (messages of mb whose id is mid)
-                    if (count of candidates) > 0 then
-                        set target to item 1 of candidates
-                        set mbId to id of mb as string
-                        set acctName to name of acct
-                        exit repeat
-                    end if
+                    set candidates to (messages of mb whose id is (mid as integer))
                 end try
+                if (count of candidates) = 0 then
+                    try
+                        set candidates to (messages of mb whose message id is mid)
+                    end try
+                end if
+                if (count of candidates) > 0 then
+                    set target to item 1 of candidates
+                    set mbId to id of mb as string
+                    set acctName to name of acct
+                    exit repeat
+                end if
             end repeat
             if target is not missing value then exit repeat
         end repeat
@@ -300,6 +397,18 @@ on jsonString(s)
     set AppleScript's text item delimiters to "\""
     set parts to text items of t
     set AppleScript's text item delimiters to "\\\""
+    set t to parts as string
+    set AppleScript's text item delimiters to return
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to linefeed
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to tab
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\t"
     set t to parts as string
     set AppleScript's text item delimiters to ""
     return "\"" & t & "\""
@@ -390,6 +499,18 @@ on jsonString(s)
     set AppleScript's text item delimiters to "\""
     set parts to text items of t
     set AppleScript's text item delimiters to "\\\""
+    set t to parts as string
+    set AppleScript's text item delimiters to return
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to linefeed
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\n"
+    set t to parts as string
+    set AppleScript's text item delimiters to tab
+    set parts to text items of t
+    set AppleScript's text item delimiters to "\\t"
     set t to parts as string
     set AppleScript's text item delimiters to ""
     return "\"" & t & "\""
@@ -507,10 +628,19 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is mid)
+                    set candidates to (messages of mb whose id is (mid as integer))
                     if (count of candidates) > 0 then
                         set src to item 1 of candidates
                         exit repeat
+                    end if
+                end try
+                try
+                    if src is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set src to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
             end repeat
@@ -569,10 +699,19 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is mid)
+                    set candidates to (messages of mb whose id is (mid as integer))
                     if (count of candidates) > 0 then
                         set target to item 1 of candidates
                         exit repeat
+                    end if
+                end try
+                try
+                    if target is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set target to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
             end repeat
@@ -615,10 +754,19 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is mid)
+                    set candidates to (messages of mb whose id is (mid as integer))
                     if (count of candidates) > 0 then
                         set target to item 1 of candidates
                         exit repeat
+                    end if
+                end try
+                try
+                    if target is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set target to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
             end repeat
