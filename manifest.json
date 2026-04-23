@@ -1,13 +1,10 @@
 {
   "name": "apple-ecosystem-mcp",
   "version": "0.1.0",
-  "display_name": "Apple Ecosystem",
+  "displayName": "Apple Ecosystem",
   "description": "MCP server for Apple Mail, Calendar, Contacts, Reminders, and iCloud Drive",
-  "server": {
-    "type": "python",
-    "config": {
-      "command": "uvx",
-      "args": ["apple-ecosystem-mcp"]
-    }
+  "mcp": {
+    "command": "uvx",
+    "args": ["apple-ecosystem-mcp"]
   }
 }
