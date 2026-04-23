@@ -6,31 +6,120 @@ An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts
 
 ## Installation
 
-Download the `.dxt` file from [GitHub Releases](https://github.com/abhinavagrawal/apple-ecosystem-mcp/releases) and double-click to install in Claude Desktop.
+### Claude Desktop (recommended for most users)
 
-Or via `uvx` for Claude Code:
+1. Download `apple-ecosystem-mcp.dxt` from [GitHub Releases](https://github.com/abhinavagrawal/apple-ecosystem-mcp/releases)
+2. Double-click the `.dxt` file — Claude Desktop will prompt you to install it
+3. Restart Claude Desktop and grant macOS permissions when prompted
+
+### Claude Code
+
+Install via `uvx` (requires uv package manager):
 
 ```bash
 uvx apple-ecosystem-mcp
 ```
 
+Or configure locally in `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "apple-ecosystem": {
+      "command": "uv",
+      "args": ["run", "--project", "/path/to/apple-ecosystem-mcp", "apple-ecosystem-mcp"]
+    }
+  }
+}
+```
+
 ## macOS Permissions
 
-The server requires explicit user approval for each app category. When you first run the server, you'll see warnings for any missing permissions. Follow the System Settings instructions to grant access.
+The server requires explicit user approval for each app category. When you first run the server, you'll see warnings for any missing permissions.
 
-- **Automation** → Mail, Calendar, Contacts, Reminders
-- **Full Disk Access** (for iCloud Drive)
+### Required Permissions
+
+| Permission | System Settings Path | Used By |
+|---|---|---|
+| **Automation** → Mail | Settings > Privacy & Security > Automation | Mail tools |
+| **Automation** → Calendar | Settings > Privacy & Security > Automation | Calendar tools |
+| **Automation** → Contacts | Settings > Privacy & Security > Automation | Contacts tools |
+| **Automation** → Reminders | Settings > Privacy & Security > Automation | Reminders tools |
+| **Full Disk Access** | Settings > Privacy & Security > Full Disk Access | iCloud Drive tools |
+
+### Granting Automation Permissions
+
+1. Open System Settings > Privacy & Security > Automation
+2. For each app (Mail, Calendar, Contacts, Reminders), ensure "Claude Desktop" or your Terminal app is listed with checkmarks next to the app
+3. If missing, click the + button and add the app
+
+### Granting Full Disk Access
+
+For iCloud Drive support:
+
+1. Open System Settings > Privacy & Security > Full Disk Access
+2. Click the + button
+3. Navigate to `/Applications/Claude.app` (Claude Desktop) or your Terminal (Claude Code)
+4. Click Add
+
+The server will continue to work even if permissions are missing; individual tools will fail with a clear error message.
 
 ## Tools
 
-The server provides tools for:
-- **Mail**: search, read, send, move, flag, delete messages across multiple accounts
-- **Calendar**: list, create, update, delete events; find free time
-- **Contacts**: search, read, create, update contacts and groups
-- **Reminders**: list, create, complete, delete reminders across multiple lists
-- **iCloud Drive**: read, write, move, delete files; search by metadata
+The server provides 34 tools across five apps:
 
-See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for the complete tool catalog and specifications.
+### Mail (8 tools)
+| Tool | Description |
+|------|---|
+| `mail_search` | Search inbox/sent by query, date range, sender |
+| `mail_get_thread` | Fetch a full email thread by subject or ID |
+| `mail_send` | Compose and send an email (dry-run by default) |
+| `mail_create_draft` | Save a draft without sending |
+| `mail_list_mailboxes` | List all mailboxes/folders across all accounts |
+| `mail_move_message` | Move message to a mailbox |
+| `mail_flag_message` | Flag or unflag a message |
+| `mail_delete_message` | Delete a message |
+
+### Calendar (7 tools)
+| Tool | Description |
+|------|---|
+| `calendar_list_calendars` | List all calendars across all accounts |
+| `calendar_list_events` | List events in a date range |
+| `calendar_get_event` | Get details of a specific event |
+| `calendar_create_event` | Create event with title, time, location, notes, invitees |
+| `calendar_update_event` | Update an existing event |
+| `calendar_delete_event` | Delete an event by ID |
+| `calendar_find_free_time` | Find free slots between two datetimes |
+
+### Contacts (5 tools)
+| Tool | Description |
+|------|---|
+| `contacts_search` | Search contacts by name, email, phone, company |
+| `contacts_get` | Get full contact record by ID |
+| `contacts_create` | Create a new contact |
+| `contacts_update` | Update fields on an existing contact |
+| `contacts_list_groups` | List contact groups |
+
+### Reminders (5 tools)
+| Tool | Description |
+|------|---|
+| `reminders_lists` | List all Reminders lists |
+| `reminders_list` | List reminders, optionally filtered by list or status |
+| `reminders_create` | Create a reminder with due date, notes, priority |
+| `reminders_complete` | Mark a reminder as complete |
+| `reminders_delete` | Delete a reminder |
+
+### iCloud Drive (5 tools)
+| Tool | Description |
+|------|---|
+| `icloud_list` | List files and folders in iCloud Drive |
+| `icloud_read` | Read a text or structured file |
+| `icloud_write` | Write or update a file |
+| `icloud_move` | Move or rename a file |
+| `icloud_delete` | Delete a file (requires confirmation) |
+| `icloud_search` | Search iCloud Drive by filename or content |
+
+See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for detailed specifications and examples.
 
 ## Complete Apple Setup
 
@@ -54,8 +143,8 @@ Together, these packages give you full access to your Apple productivity stack.
 - **Permissions:** System Settings > Privacy & Security controls what the server can access
 - **TCC sandbox:** Full Disk Access is required only for iCloud Drive; Mail/Calendar/Contacts/Reminders use narrower Automation permissions
 
-### Transparency
-For questions about how this server uses your data, see [PRIVACY.md](./PRIVACY.md) (link placeholder).
+### Full Privacy Policy
+See [PRIVACY.md](./PRIVACY.md) for the complete privacy policy and data handling practices.
 
 ## Development
 
@@ -80,9 +169,9 @@ uv run pytest tests/ -k "not live" -v
 APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v
 ```
 
-### Running Locally in Claude Desktop
+### Local Development
 
-Before publishing to PyPI, test locally:
+If you're developing locally before publishing to PyPI, add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -95,7 +184,7 @@ Before publishing to PyPI, test locally:
 }
 ```
 
-Add this to `~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude Desktop.
+Then restart Claude Desktop to pick up changes during development.
 
 ### Project Structure
 
@@ -105,33 +194,47 @@ See [CLAUDE.md](./CLAUDE.md) for implementation contracts and [IMPLEMENTATION_PL
 
 ### "AppleScript failed" Error
 
-If you see an AppleScript error, it usually means:
-1. Missing macOS permission — restart and grant access in System Settings > Privacy & Security
-2. Timeout (30s) — the app was slow to respond; try again
-3. App not installed — ensure Mail, Calendar, Contacts, Reminders, or iCloud Drive is available
+If you see an AppleScript error:
 
-Check the system logs for details:
-```bash
-# View debug logs
-tail -f ~/.claude/debug.log
-```
+1. **Check macOS permissions** — See [macOS Permissions](#macos-permissions) section above and verify all required permissions are granted in System Settings
+2. **Restart Claude Desktop** — After granting new permissions, fully restart Claude Desktop (not just refresh)
+3. **Timeout (30s)** — The app was slow to respond; try again, or check if the app is hanging
+4. **App not installed** — Ensure Mail, Calendar, Contacts, Reminders, or iCloud Drive is available on your Mac
 
-### Full Disk Access Not Granted
+### Permission Denied Error (-1743)
 
-iCloud Drive tools require Full Disk Access. To grant it:
-1. System Settings > Privacy & Security > Full Disk Access
-2. Click the + button
-3. Navigate to `/Applications/Claude.app` (Claude Desktop) or your Terminal app (Claude Code)
-4. Click Add
+This macOS error means the user previously denied permission. To reset and re-prompt:
 
-### Permission Denied (-1743)
-
-This macOS error means the user denied permission for the app. To reset permissions and re-prompt:
 ```bash
 # Reset Mail permission
 tccutil reset Automation com.apple.Mail
 
-# Then re-run the server and grant permission when prompted
+# Reset Calendar permission
+tccutil reset Automation com.apple.iCal
+
+# Reset Contacts permission
+tccutil reset Automation com.apple.Contacts
+
+# Reset Reminders permission
+tccutil reset Automation com.apple.reminders
+```
+
+After resetting, restart Claude Desktop and the app will re-prompt for permission.
+
+### "Path escapes iCloud root" Error
+
+This error occurs when using iCloud Drive tools with an invalid path. Ensure:
+- Paths are relative to the iCloud Drive root (use `/` or `/folder/file.txt`, not absolute paths)
+- Paths do not contain `..` segments or symlink escapes
+- Files exist before trying to read them
+
+### Debug Logging
+
+For detailed error information:
+
+```bash
+# View server stderr (Claude Desktop logs)
+log stream --predicate 'process == "Claude"' --level debug
 ```
 
 ## Contributing
