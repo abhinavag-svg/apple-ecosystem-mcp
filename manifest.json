@@ -8,12 +8,8 @@
     "name": "Abhinav Agrawal"
   },
   "server": {
-    "type": "python",
+    "type": "stdio",
     "command": "uvx",
     "args": ["apple-ecosystem-mcp"]
-  },
-  "compatibility": {
-    "platforms": ["darwin"],
-    "claude_desktop": ">=0.10"
   }
 }
