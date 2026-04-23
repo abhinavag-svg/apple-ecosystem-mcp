@@ -8,8 +8,10 @@
     "name": "Abhinav Agrawal"
   },
   "server": {
-    "type": "stdio",
-    "command": "uvx",
-    "args": ["apple-ecosystem-mcp"]
+    "type": "python",
+    "mcp_config": {
+      "command": "uvx",
+      "args": ["apple-ecosystem-mcp"]
+    }
   }
 }
