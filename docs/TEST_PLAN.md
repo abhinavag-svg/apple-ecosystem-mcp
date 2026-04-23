@@ -250,11 +250,15 @@ Test intent:
 Concrete test cases:
 
 - `reminders_lists()` returns exact user list names
-- `reminders_list()` filters by list name when provided
+- `reminders_list()` filters by list name when provided (or all lists when `list_name=None`)
 - `reminders_list()` filters by completion status
 - list names are treated as exact user-provided names, not localized defaults
+- `reminders_create()` with `list_name=None` delegates to AppleScript (uses first list)
+- `reminders_create()` with explicit `list_name` validates against `reminders_lists()` before creating
 - `reminders_create()` accepts optional due date, notes, and priority
-- due date parsing accepts valid ISO 8601 values
+- due dates are normalized to "YYYY-MM-DDTHH:MM:SS" format for consistent local-time handling
+- date-only ISO input (e.g., "2026-04-25") is normalized to "2026-04-25T00:00:00" (midnight)
+- full-timestamp ISO input (e.g., "2026-04-25T14:30:00") is converted to local time if needed
 - invalid due date input returns a clear validation error
 - `reminders_complete()` marks reminder complete by canonical reminder ID
 - `reminders_delete()` deletes by canonical reminder ID

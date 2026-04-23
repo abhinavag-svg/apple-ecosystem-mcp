@@ -119,10 +119,10 @@ def test_reminders_create_defaults(monkeypatch):
     reminders.reminders_create(title="Simple")
     call = run_mock.call_args
     assert call.args[1] == "Simple"
-    assert call.args[2] == "Reminders"
-    assert call.args[3] == ""
-    assert call.args[4] == ""
-    assert call.args[5] == "0"
+    assert call.args[2] == ""  # list_name=None delegates to AppleScript (empty string)
+    assert call.args[3] == ""  # no due date
+    assert call.args[4] == ""  # no notes
+    assert call.args[5] == "0"  # priority=0
 
 
 def test_reminders_create_rejects_invalid_iso(monkeypatch):
@@ -135,7 +135,8 @@ def test_reminders_create_rejects_invalid_iso(monkeypatch):
 def test_reminders_create_accepts_date_only_iso(monkeypatch):
     run_mock = _patch_run(monkeypatch, "R-UUID-NEW")
     reminders.reminders_create(title="ok", due="2026-04-25")
-    assert run_mock.call_args.args[3] == "2026-04-25"
+    # Date-only input is normalized to full timestamp (midnight local time)
+    assert run_mock.call_args.args[3] == "2026-04-25T00:00:00"
 
 
 def test_reminders_create_uses_argv_not_interpolation(monkeypatch):

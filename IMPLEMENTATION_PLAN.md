@@ -586,11 +586,16 @@ calendar.py:
 reminders.py:
 
   reminders_lists() -> list[str]
-  reminders_list(list_name: str = None,
+  reminders_list(list_name: str | None = None,
                  completed: bool = False) -> list[dict]
-  reminders_create(title: str, list_name: str = "Reminders",
-                   due: str = None, notes: str = None,
+  reminders_create(title: str, list_name: str | None = None,
+                   due: str | None = None, notes: str | None = None,
                    priority: int = 0) -> dict
+    list_name=None delegates to AppleScript (uses first list). Accepts
+    any user-visible list name and validates against reminders_lists().
+    due dates are normalized to "YYYY-MM-DDTHH:MM:SS" local time for
+    consistent handling (including timezone conversions); AppleScript
+    parse_iso() accepts both date-only and full-timestamp formats.
   reminders_complete(reminder_id: str) -> dict
   reminders_delete(reminder_id: str) -> dict
 
