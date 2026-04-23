@@ -71,7 +71,13 @@ on run argv
                 if not firstItem then set output to output & ","
                 set firstItem to false
                 set mbName to name of mb
-                set mbId to (id of mb) as string
+                set mbId to ""
+                try
+                    set mbId to (id of mb) as string
+                end try
+                if mbId is "" then
+                    set mbId to mbName
+                end if
                 set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
             end repeat
         end repeat
