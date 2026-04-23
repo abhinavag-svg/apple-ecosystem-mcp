@@ -259,7 +259,7 @@ end run
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Reminder Lists", readOnlyHint=True))
 def reminders_lists() -> list[str]:
     """List all reminder lists."""
     raw = run_applescript(_LISTS_SCRIPT)
@@ -270,7 +270,7 @@ def reminders_lists() -> list[str]:
     return [str(n) for n in parsed if _nn(n)]
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Reminders", readOnlyHint=True))
 def reminders_list(list_name: str | None = None, completed: bool = False) -> list[dict]:
     """List reminders, optionally filtered by list or status."""
     raw = run_applescript(
@@ -299,7 +299,7 @@ def reminders_list(list_name: str | None = None, completed: bool = False) -> lis
     return results
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Create Reminder"))
 def reminders_create(
     title: str,
     list_name: str | None = None,
@@ -333,14 +333,14 @@ def reminders_create(
     return {"id": rid, "success": True}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Complete Reminder", destructiveHint=True))
 def reminders_complete(reminder_id: str) -> dict:
     """Mark a reminder as complete."""
     rid = run_applescript(_COMPLETE_SCRIPT, reminder_id)
     return {"id": rid or reminder_id, "success": True}
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Delete Reminder", destructiveHint=True))
 def reminders_delete(reminder_id: str) -> dict:
     """Delete a reminder."""
     rid = run_applescript(_DELETE_SCRIPT, reminder_id)

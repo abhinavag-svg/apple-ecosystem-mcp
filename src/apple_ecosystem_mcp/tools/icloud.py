@@ -39,7 +39,7 @@ def _safe(user_path: str) -> Path:
     return resolved
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List iCloud Files", readOnlyHint=True))
 def icloud_list(path: str = "/") -> list[dict]:
     """List files and folders in iCloud Drive."""
     try:
@@ -68,7 +68,7 @@ def icloud_list(path: str = "/") -> list[dict]:
         raise RuntimeError(f"Failed to list iCloud path: {e}") from e
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Read iCloud File", readOnlyHint=True))
 def icloud_read(path: str) -> dict:
     """Read a file from iCloud Drive."""
     try:
@@ -114,7 +114,7 @@ def icloud_read(path: str) -> dict:
         raise RuntimeError(f"Failed to read iCloud file: {e}") from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Write iCloud File", destructiveHint=True))
 def icloud_write(path: str, content: str, create_dirs: bool = True) -> dict:
     """Write a file to iCloud Drive."""
     try:
@@ -142,7 +142,7 @@ def icloud_write(path: str, content: str, create_dirs: bool = True) -> dict:
         raise RuntimeError(f"Failed to write iCloud file: {e}") from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Move iCloud File", destructiveHint=True))
 def icloud_move(src: str, dst: str) -> dict:
     """Move or rename a file in iCloud Drive."""
     try:
@@ -169,7 +169,7 @@ def icloud_move(src: str, dst: str) -> dict:
         raise RuntimeError(f"Failed to move iCloud file: {e}") from e
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Delete iCloud File", destructiveHint=True))
 def icloud_delete(path: str, confirm: bool = False) -> dict:
     """Delete a file from iCloud Drive (requires confirm=True)."""
     try:
@@ -201,7 +201,7 @@ def icloud_delete(path: str, confirm: bool = False) -> dict:
         raise RuntimeError(f"Failed to delete iCloud path: {e}") from e
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Search iCloud Drive", readOnlyHint=True))
 def icloud_search(query: str, path: str = "/", content_search: bool = False) -> list[dict]:
     """Search iCloud Drive by filename or content."""
     try:

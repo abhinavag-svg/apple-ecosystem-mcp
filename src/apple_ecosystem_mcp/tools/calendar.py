@@ -430,13 +430,13 @@ def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[d
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Calendars", readOnlyHint=True))
 def calendar_list_calendars() -> list[dict]:
     """List calendars across all accounts with uid, account_name, and writable."""
     return _calendars_cached()
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Events", readOnlyHint=True))
 def calendar_list_events(
     start: str,
     end: str,
@@ -456,7 +456,7 @@ def calendar_list_events(
     return data[:capped]
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Get Event", readOnlyHint=True))
 def calendar_get_event(event_id: str) -> dict:
     """Get details for a specific event by canonical UID."""
     raw = run_applescript(_GET_EVENT_SCRIPT, event_id)
@@ -468,7 +468,7 @@ def calendar_get_event(event_id: str) -> dict:
     return data
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Create Event"))
 def calendar_create_event(
     title: str,
     start: str,
@@ -500,7 +500,7 @@ def calendar_create_event(
     return {"uid": data["uid"], "success": True}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Update Event"))
 def calendar_update_event(
     event_id: str,
     title: str | None = None,
@@ -542,7 +542,7 @@ def calendar_update_event(
     return {"uid": data["uid"], "success": True}
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Delete Event", destructiveHint=True))
 def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     """Delete an event by UID. Requires confirm=True; otherwise returns a preview."""
     if not confirm:
@@ -566,7 +566,7 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     return {"uid": event_id, "success": True}
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Find Free Time", readOnlyHint=True))
 def calendar_find_free_time(
     date: str,
     duration_minutes: int,

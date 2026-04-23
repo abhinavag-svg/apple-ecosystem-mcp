@@ -8,7 +8,7 @@ An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts
 
 ### Claude Desktop (recommended for most users)
 
-1. Download `apple-ecosystem-mcp.dxt` from [GitHub Releases](https://github.com/abhinavagrawal/apple-ecosystem-mcp/releases)
+1. Download `apple-ecosystem-mcp.dxt` from [GitHub Releases](https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases)
 2. Double-click the `.dxt` file — Claude Desktop will prompt you to install it
 3. Restart Claude Desktop and grant macOS permissions when prompted
 

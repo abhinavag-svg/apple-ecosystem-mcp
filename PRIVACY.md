@@ -116,7 +116,7 @@ There is **no background sync, no automatic data collection, and no continuous m
 ### Request Deletion
 If you believe your data has been stored or transmitted outside your control, contact:
 - **Author:** Abhinav Agrawal (abhinavag@icloud.com)
-- **GitHub Issues:** [apple-ecosystem-mcp/issues](https://github.com/abhinavagrawal/apple-ecosystem-mcp/issues)
+- **GitHub Issues:** [apple-ecosystem-mcp/issues](https://github.com/abhinavag-svg/apple-ecosystem-mcp/issues)
 
 ## Third-Party Services
 
@@ -148,4 +148,4 @@ This privacy policy reflects the current implementation (Phase 1). As new featur
 
 For privacy questions, open an issue on GitHub or email the author:
 - **Email:** abhinavag@icloud.com
-- **GitHub:** https://github.com/abhinavagrawal/apple-ecosystem-mcp
+- **GitHub:** https://github.com/abhinavag-svg/apple-ecosystem-mcp

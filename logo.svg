@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="appleGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#555555;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#000000;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="256" height="256" fill="#f5f5f5" rx="48"/>
+
+  <!-- Apple logo outline -->
+  <g transform="translate(128, 100)">
+    <!-- Stem -->
+    <rect x="-3" y="-40" width="6" height="20" fill="url(#appleGradient)" rx="3"/>
+    <!-- Leaf -->
+    <ellipse cx="15" cy="-25" rx="12" ry="8" fill="url(#appleGradient)" transform="rotate(-30 15 -25)"/>
+    <!-- Apple body -->
+    <circle cx="0" cy="0" r="35" fill="url(#appleGradient)"/>
+    <!-- Highlight -->
+    <circle cx="-12" cy="-15" r="10" fill="#ffffff" opacity="0.3"/>
+  </g>
+
+  <!-- Connecting nodes (representing ecosystem apps) -->
+  <g stroke="url(#appleGradient)" stroke-width="2" fill="none" stroke-linecap="round">
+    <!-- Mail -->
+    <circle cx="60" cy="180" r="8" fill="#555555"/>
+    <!-- Calendar -->
+    <circle cx="196" cy="180" r="8" fill="#555555"/>
+    <!-- Contacts -->
+    <circle cx="60" cy="220" r="8" fill="#555555"/>
+    <!-- Reminders -->
+    <circle cx="196" cy="220" r="8" fill="#555555"/>
+    <!-- iCloud -->
+    <circle cx="128" cy="240" r="8" fill="#555555"/>
+
+    <!-- Connecting lines to center -->
+    <line x1="128" y1="140" x2="60" y2="180" opacity="0.5"/>
+    <line x1="128" y1="140" x2="196" y2="180" opacity="0.5"/>
+    <line x1="128" y1="140" x2="60" y2="220" opacity="0.5"/>
+    <line x1="128" y1="140" x2="196" y2="220" opacity="0.5"/>
+    <line x1="128" y1="140" x2="128" y2="240" opacity="0.5"/>
+  </g>
+
+  <!-- App labels (small text) -->
+  <text x="60" y="200" text-anchor="middle" font-size="10" fill="#333333" font-family="system-ui">✉</text>
+  <text x="196" y="200" text-anchor="middle" font-size="10" fill="#333333" font-family="system-ui">📅</text>
+  <text x="60" y="240" text-anchor="middle" font-size="10" fill="#333333" font-family="system-ui">👥</text>
+  <text x="196" y="240" text-anchor="middle" font-size="10" fill="#333333" font-family="system-ui">✓</text>
+  <text x="128" y="258" text-anchor="middle" font-size="10" fill="#333333" font-family="system-ui">☁</text>
+</svg>

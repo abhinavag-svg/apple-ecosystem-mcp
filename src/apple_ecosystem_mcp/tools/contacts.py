@@ -332,7 +332,7 @@ end replace
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Search Contacts", readOnlyHint=True))
 def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT) -> list[dict]:
     """Search contacts by name, email, phone, or company."""
     capped = max(1, min(int(limit), _SEARCH_LIMIT_MAX))
@@ -356,7 +356,7 @@ def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT) -> list[dict
     return results
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Get Contact", readOnlyHint=True))
 def contacts_get(contact_id: str) -> dict:
     """Get a full contact record by id."""
     raw = run_applescript(_GET_SCRIPT, contact_id)
@@ -392,7 +392,7 @@ def contacts_get(contact_id: str) -> dict:
     return result
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Create Contact"))
 def contacts_create(
     first: str,
     last: str | None = None,
@@ -412,7 +412,7 @@ def contacts_create(
     return {"id": pid, "success": True}
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Update Contact"))
 def contacts_update(
     contact_id: str,
     first: str | None = None,
@@ -435,7 +435,7 @@ def contacts_update(
     return {"id": pid or contact_id, "success": True}
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Contact Groups", readOnlyHint=True))
 def contacts_list_groups() -> list[str]:
     """List contact groups."""
     raw = run_applescript(_GROUPS_SCRIPT)

@@ -118,7 +118,7 @@ end jsonString
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="List Mailboxes", readOnlyHint=True))
 def mail_list_mailboxes() -> list[dict]:
     """List all mailboxes across every Mail account with canonical ids."""
     raw = run_applescript(_LIST_MAILBOXES_SCRIPT)
@@ -287,7 +287,7 @@ end jsonString
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Search Mail", readOnlyHint=True))
 def mail_search(
     query: str,
     mailbox_id: str | None = None,
@@ -416,7 +416,7 @@ end jsonString
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Get Email Thread", readOnlyHint=True))
 def mail_get_thread(message_id: str, include_body: bool = True) -> dict:
     """Fetch a Mail message by canonical RFC Message-ID; plain-text body only, 8K cap."""
     raw = run_applescript(_GET_THREAD_SCRIPT, message_id, "1" if include_body else "0")
@@ -537,7 +537,7 @@ def _validate_from_account(from_account: str | None) -> None:
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Send Email"))
 def mail_send(
     to: list[str],
     subject: str,
@@ -585,7 +585,7 @@ def mail_send(
     return data
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Create Draft"))
 def mail_create_draft(
     to: list[str],
     subject: str,
@@ -673,7 +673,7 @@ end run
 """
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Move Message", destructiveHint=True))
 def mail_move_message(message_id: str, mailbox_id: str) -> dict:
     """Move a Mail message to a mailbox by persistent id."""
     raw = run_applescript(_MOVE_SCRIPT, message_id, mailbox_id)
@@ -729,7 +729,7 @@ end run
 """
 
 
-@mcp.tool()
+@mcp.tool(annotations=ToolAnnotations(title="Flag Message"))
 def mail_flag_message(message_id: str, flagged: bool) -> dict:
     """Flag or unflag a Mail message by canonical id."""
     raw = run_applescript(_FLAG_SCRIPT, message_id, "1" if flagged else "0")
@@ -784,7 +784,7 @@ end run
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Delete Message", destructiveHint=True))
 def mail_delete(message_id: str) -> dict:
     """Delete a Mail message by canonical id."""
     raw = run_applescript(_DELETE_SCRIPT, message_id)
