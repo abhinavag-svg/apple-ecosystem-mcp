@@ -4,9 +4,19 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
 - **Last changed:** 2026-04-23
-- **Next TODO:** Start `MAIL-001` (canonical message IDs end-to-end)
+- **Current version:** v0.1.4 (PyPI + GitHub released)
+- **Next TODO:** Pick from high-value backlog: `MAIL-001` or `CAL-001` or `TST-001`
 
 ## Session Log
+
+### Session 2 (2026-04-23, post-release)
+- **What changed:**
+  - Finalized specs and tests for Reminders after intentional implementation design change (list_name=None delegation, ISO date normalization).
+  - Updated IMPLEMENTATION_PLAN.md, docs/TEST_PLAN.md, and test_reminders.py to reflect correct contracts.
+  - Version bump 0.1.3 → 0.1.4: patch release for spec/test alignment and improved documentation.
+- **Blockers:** None blocking v0.1.4 release.
+- **Next steps:**
+  - Pick backlog item: `MAIL-001` (canonical RFC Message-ID), `CAL-001` (event overlap), `TST-001` (regression), or `PKG-001` (DXT stability).
 
 ### Session 1 (2026-04-23)
 - **What changed:**
