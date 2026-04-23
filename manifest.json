@@ -12,7 +12,7 @@
     "url": "https://github.com/abhinavag-svg/apple-ecosystem-mcp.git"
   },
   "server": {
-    "type": "stdio",
+    "type": "uv",
     "mcp_config": {
       "command": "uvx",
       "args": ["apple-ecosystem-mcp"]
