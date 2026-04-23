@@ -12,7 +12,8 @@
     "url": "https://github.com/abhinavag-svg/apple-ecosystem-mcp.git"
   },
   "server": {
-    "type": "python",
+    "type": "uv",
+    "entry_point": "src/apple_ecosystem_mcp/__main__.py",
     "mcp_config": {
       "command": "uvx",
       "args": ["apple-ecosystem-mcp"]
