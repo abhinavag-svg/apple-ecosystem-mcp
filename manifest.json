@@ -12,14 +12,10 @@
     "url": "https://github.com/abhinavag-svg/apple-ecosystem-mcp.git"
   },
   "server": {
-    "type": "uv",
-    "entry_point": "src/apple_ecosystem_mcp/__main__.py",
+    "type": "stdio",
     "mcp_config": {
-      "command": "uv",
-      "args": ["run", "--directory", "${__dirname}", "python", "-m", "apple_ecosystem_mcp"],
-      "env": {
-        "PYTHONPATH": "${__dirname}/src"
-      }
+      "command": "uvx",
+      "args": ["apple-ecosystem-mcp"]
     }
   },
   "compatibility": {
