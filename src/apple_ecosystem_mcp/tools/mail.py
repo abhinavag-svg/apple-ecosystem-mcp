@@ -82,12 +82,49 @@ on run argv
                 if mbId is "" then
                     set mbId to mbName
                 end if
-                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
+                set mbPath to my buildMailboxPath(mb)
+                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"path\":" & my jsonString(mbPath) & "}"
             end repeat
         end repeat
     end tell
     return output & "]"
 end run
+
+on buildMailboxPath(mb)
+    set pathParts to {name of mb}
+    set currentMb to mb
+    tell application "Mail"
+        repeat
+            try
+                set containerMb to container of currentMb
+                if containerMb is missing value then
+                    exit repeat
+                end if
+                -- Check if container is an account (has property 'mailboxes')
+                try
+                    count of mailboxes of containerMb
+                    -- If we got here, it's an account, so stop
+                    exit repeat
+                on error
+                    -- Container is another mailbox, add to path
+                    set end of pathParts to name of containerMb
+                    set currentMb to containerMb
+                end try
+            on error
+                exit repeat
+            end try
+        end repeat
+    end tell
+    -- Reverse pathParts and join with /
+    set reversedParts to {}
+    repeat with i from (count of pathParts) down to 1
+        set end of reversedParts to item i of pathParts
+    end repeat
+    set AppleScript's text item delimiters to "/"
+    set pathStr to reversedParts as string
+    set AppleScript's text item delimiters to ""
+    return pathStr
+end buildMailboxPath
 
 on jsonString(s)
     if s is missing value then return "null"
@@ -138,7 +175,24 @@ on run argv
     set mbId to item 2 of argv
     set sinceStr to item 3 of argv
     set limitStr to item 4 of argv
+    set fromAddr to item 5 of argv
+    set unreadStr to item 6 of argv
+    set flaggedStr to item 7 of argv
+    set hasAttachStr to item 8 of argv
+    set acctNameFilter to item 9 of argv
+    set searchBodyStr to item 10 of argv
+    set beforeStr to item 11 of argv
+    set mbIdsCountStr to item 12 of argv
+
     set lim to (limitStr as integer)
+    set searchBody to searchBodyStr is "1"
+    set mbIdsCount to (mbIdsCountStr as integer)
+    set mbIds to {}
+    set mbIdsIdx to 13
+    repeat mbIdsCount times
+        set end of mbIds to item mbIdsIdx of argv
+        set mbIdsIdx to mbIdsIdx + 1
+    end repeat
 
     if qry is "" then
         return "[]"
@@ -151,97 +205,176 @@ on run argv
     tell application "Mail"
         repeat with acct in accounts
             set acctName to name of acct
-            repeat with mb in mailboxes of acct
-                set shouldSearch to false
-                if mbId is "" then
-                    set shouldSearch to true
-                else
-                    try
-                        if (id of mb as string) is mbId then
-                            set shouldSearch to true
-                        end if
-                    end try
-                    if shouldSearch is false then
+            set checkAcctFilter to acctNameFilter is "" or acctName is acctNameFilter
+
+            if checkAcctFilter then
+                repeat with mb in mailboxes of acct
+                    set shouldSearch to false
+                    if mbIdsCount > 0 then
+                        set mbIdStr to id of mb as string
+                        repeat with mbIdToCheck in mbIds
+                            if mbIdStr is mbIdToCheck then
+                                set shouldSearch to true
+                                exit repeat
+                            end if
+                        end repeat
+                    else if mbId is "" then
+                        set shouldSearch to true
+                    else
                         try
-                            if (name of mb as string) is mbId then
+                            if (id of mb as string) is mbId then
                                 set shouldSearch to true
                             end if
                         end try
-                    end if
-                end if
-                if shouldSearch then
-                    set msgList to {}
-                    set mCount to 0
-                    try
-                        set msgList to messages of mb
-                        set mCount to count of msgList
-                    end try
-
-                    set scanLim to mCount
-                    if scanLim > 5000 then set scanLim to 5000
-
-                    repeat with offset_ from 0 to (scanLim - 1)
-                        if count_ ≥ lim then exit repeat
-                        set idx_ to (mCount - offset_)
-                        if idx_ < 1 then exit repeat
-
-                        set msg to missing value
-                        try
-                            set msg to item idx_ of msgList
-                        end try
-                        if msg is missing value then
-                            -- Skip invalid/unavailable message references.
-                        else
-
-                            set subj to ""
+                        if shouldSearch is false then
                             try
-                                set subj to subject of msg as string
+                                if (name of mb as string) is mbId then
+                                    set shouldSearch to true
+                                end if
                             end try
-                            if subj is "" then
-                                -- Skip messages with no subject.
-                            else if my containsCI(subj, qry) then
-                                set msgDate to ""
+                        end if
+                    end if
+
+                    if shouldSearch then
+                        set msgList to {}
+                        set mCount to 0
+                        try
+                            set msgList to messages of mb
+                            set mCount to count of msgList
+                        end try
+
+                        set scanLim to mCount
+                        if scanLim > 5000 then set scanLim to 5000
+
+                        repeat with offset_ from 0 to (scanLim - 1)
+                            if count_ ≥ lim then exit repeat
+                            set idx_ to (mCount - offset_)
+                            if idx_ < 1 then exit repeat
+
+                            set msg to missing value
+                            try
+                                set msg to item idx_ of msgList
+                            end try
+                            if msg is missing value then
+                                -- Skip invalid/unavailable message references.
+                            else
+                                set subj to ""
                                 try
-                                    set msgDate to (date received of msg) as «class isot» as string
+                                    set subj to subject of msg as string
                                 end try
-                                if sinceStr is "" or (msgDate is not "" and msgDate ≥ sinceStr) then
-                                    set snd to ""
-                                    try
-                                        set snd to sender of msg as string
-                                    end try
-                                    set mid to ""
-                                    try
-                                        set mid to message id of msg as string
-                                    end try
-                                    set internalId to ""
-                                    try
-                                        set internalId to id of msg as string
-                                    end try
-                                    if mid is "" then set mid to internalId
-                                    set bodyText to ""
-                                    try
-                                        set bodyText to content of msg
-                                    end try
-                                    if (length of bodyText) > 200 then
-                                        set preview to text 1 thru 200 of bodyText
-                                    else
-                                        set preview to bodyText
+                                if subj is "" then
+                                    -- Skip messages with no subject.
+                                else
+                                    set queryMatch to false
+                                    if my containsCI(subj, qry) then
+                                        set queryMatch to true
+                                    else if searchBody then
+                                        set bodyText to ""
+                                        try
+                                            set bodyText to content of msg
+                                        end try
+                                        if my containsCI(bodyText, qry) then
+                                            set queryMatch to true
+                                        end if
                                     end if
-                                    set thisMbId to ""
-                                    try
-                                        set thisMbId to id of mb as string
-                                    end try
-                                    if not firstItem then set output to output & ","
-                                    set firstItem to false
-                                    set output to output & "{\"id\":" & my jsonString(mid) & ",\"internal_id\":" & my jsonString(internalId) & ",\"subject\":" & my jsonString(subj) & ",\"sender\":" & my jsonString(snd) & ",\"date\":" & my jsonString(msgDate) & ",\"preview\":" & my jsonString(preview) & ",\"mailbox_id\":" & my jsonString(thisMbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
-                                    set count_ to count_ + 1
+
+                                    if queryMatch then
+                                        set msgDate to ""
+                                        try
+                                            set msgDate to (date received of msg) as «class isot» as string
+                                        end try
+
+                                        set dateInRange to true
+                                        if sinceStr is not "" and (msgDate is "" or msgDate < sinceStr) then
+                                            set dateInRange to false
+                                        end if
+                                        if beforeStr is not "" and (msgDate is "" or msgDate > beforeStr) then
+                                            set dateInRange to false
+                                        end if
+
+                                        if dateInRange then
+                                            set unreadMatch to true
+                                            if unreadStr is not "" then
+                                                set isUnread to not (read status of msg)
+                                                if unreadStr is "1" then
+                                                    set unreadMatch to isUnread
+                                                else
+                                                    set unreadMatch to not isUnread
+                                                end if
+                                            end if
+
+                                            set flaggedMatch to true
+                                            if flaggedStr is not "" then
+                                                set isFlagged to flagged status of msg
+                                                if flaggedStr is "1" then
+                                                    set flaggedMatch to isFlagged
+                                                else
+                                                    set flaggedMatch to not isFlagged
+                                                end if
+                                            end if
+
+                                            set attachMatch to true
+                                            if hasAttachStr is not "" then
+                                                set hasAttach to (count of mail attachments of msg) > 0
+                                                if hasAttachStr is "1" then
+                                                    set attachMatch to hasAttach
+                                                else
+                                                    set attachMatch to not hasAttach
+                                                end if
+                                            end if
+
+                                            set fromMatch to true
+                                            if fromAddr is not "" then
+                                                set snd to ""
+                                                try
+                                                    set snd to sender of msg as string
+                                                end try
+                                                set fromMatch to my containsCI(snd, fromAddr)
+                                            end if
+
+                                            if unreadMatch and flaggedMatch and attachMatch and fromMatch then
+                                                set snd to ""
+                                                try
+                                                    set snd to sender of msg as string
+                                                end try
+                                                set mid to ""
+                                                try
+                                                    set mid to message id of msg as string
+                                                end try
+                                                set internalId to ""
+                                                try
+                                                    set internalId to id of msg as string
+                                                end try
+                                                if mid is "" then set mid to internalId
+                                                set bodyText to ""
+                                                try
+                                                    set bodyText to content of msg
+                                                end try
+                                                if (length of bodyText) > 200 then
+                                                    set preview to text 1 thru 200 of bodyText
+                                                else
+                                                    set preview to bodyText
+                                                end if
+                                                set thisMbId to ""
+                                                try
+                                                    set thisMbId to id of mb as string
+                                                end try
+                                                set hasAttach to (count of mail attachments of msg) > 0
+
+                                                if not firstItem then set output to output & ","
+                                                set firstItem to false
+                                                set output to output & "{\"id\":" & my jsonString(mid) & ",\"internal_id\":" & my jsonString(internalId) & ",\"subject\":" & my jsonString(subj) & ",\"sender\":" & my jsonString(snd) & ",\"date\":" & my jsonString(msgDate) & ",\"preview\":" & my jsonString(preview) & ",\"mailbox_id\":" & my jsonString(thisMbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"has_attachments\":" & (hasAttach as string) & "}"
+                                                set count_ to count_ + 1
+                                            end if
+                                        end if
+                                    end if
                                 end if
                             end if
-                        end if
-                    end repeat
-                    if count_ ≥ lim then exit repeat
-                end if
-            end repeat
+                        end repeat
+                        if count_ ≥ lim then exit repeat
+                    end if
+                end repeat
+            end if
             if count_ ≥ lim then exit repeat
         end repeat
     end tell
@@ -293,17 +426,49 @@ def mail_search(
     mailbox_id: str | None = None,
     limit: int = _MAIL_SEARCH_DEFAULT,
     since: str | None = None,
+    before: str | None = None,
+    search_fields: list[str] | None = None,
+    filters: dict | None = None,
 ) -> list[dict]:
-    """Search Mail messages; returns canonical ids, capped at 100 results."""
+    """Search Mail messages with optional filters; returns canonical ids, capped at 100 results.
+
+    Args:
+        query: Search query string
+        mailbox_id: Optional single mailbox ID (backward compatibility)
+        limit: Result limit (1-100, default 20)
+        since: ISO date string for start of date range
+        before: ISO date string for end of date range
+        search_fields: List of fields to search (default ["subject"]; can include "body")
+        filters: Optional dict with keys: from_addr, to_addr, cc_addr, unread (bool),
+                 flagged (bool), has_attachments (bool), account_name, mailbox_ids (list)
+    """
     query = (query or "").strip()
     capped = max(1, min(int(limit), _MAIL_SEARCH_MAX))
-    raw = run_applescript(
-        _SEARCH_SCRIPT,
+
+    filters = filters or {}
+    search_fields = search_fields or ["subject"]
+
+    # Build args list for AppleScript
+    args = [
         query,
         mailbox_id or "",
         since or "",
         str(capped),
-    )
+        filters.get("from_addr") or "",
+        "1" if filters.get("unread") is True else ("0" if filters.get("unread") is False else ""),
+        "1" if filters.get("flagged") is True else ("0" if filters.get("flagged") is False else ""),
+        "1" if filters.get("has_attachments") is True else ("0" if filters.get("has_attachments") is False else ""),
+        filters.get("account_name") or "",
+        "1" if "body" in search_fields else "0",
+        before or "",
+    ]
+
+    # Add mailbox_ids list
+    mailbox_ids = filters.get("mailbox_ids") or []
+    args.append(str(len(mailbox_ids)))
+    args.extend(mailbox_ids)
+
+    raw = run_applescript(_SEARCH_SCRIPT, *args)
     data = _parse_json(raw) or []
     if not isinstance(data, list):
         raise RuntimeError("Unexpected mail_search payload shape")
@@ -330,11 +495,11 @@ on run argv
             repeat with mb in mailboxes of acct
                 set candidates to {}
                 try
-                    set candidates to (messages of mb whose id is (mid as integer))
+                    set candidates to (messages of mb whose message id is mid)
                 end try
                 if (count of candidates) = 0 then
                     try
-                        set candidates to (messages of mb whose message id is mid)
+                        set candidates to (messages of mb whose id is (mid as integer))
                     end try
                 end if
                 if (count of candidates) > 0 then
@@ -628,15 +793,17 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is (mid as integer))
-                    if (count of candidates) > 0 then
-                        set src to item 1 of candidates
-                        exit repeat
+                    if src is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set src to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
                 try
                     if src is missing value then
-                        set candidates to (messages of mb whose message id is mid)
+                        set candidates to (messages of mb whose id is (mid as integer))
                         if (count of candidates) > 0 then
                             set src to item 1 of candidates
                             exit repeat
@@ -699,15 +866,17 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is (mid as integer))
-                    if (count of candidates) > 0 then
-                        set target to item 1 of candidates
-                        exit repeat
+                    if target is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set target to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
                 try
                     if target is missing value then
-                        set candidates to (messages of mb whose message id is mid)
+                        set candidates to (messages of mb whose id is (mid as integer))
                         if (count of candidates) > 0 then
                             set target to item 1 of candidates
                             exit repeat
@@ -754,15 +923,17 @@ on run argv
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
                 try
-                    set candidates to (messages of mb whose id is (mid as integer))
-                    if (count of candidates) > 0 then
-                        set target to item 1 of candidates
-                        exit repeat
+                    if target is missing value then
+                        set candidates to (messages of mb whose message id is mid)
+                        if (count of candidates) > 0 then
+                            set target to item 1 of candidates
+                            exit repeat
+                        end if
                     end if
                 end try
                 try
                     if target is missing value then
-                        set candidates to (messages of mb whose message id is mid)
+                        set candidates to (messages of mb whose id is (mid as integer))
                         if (count of candidates) > 0 then
                             set target to item 1 of candidates
                             exit repeat
