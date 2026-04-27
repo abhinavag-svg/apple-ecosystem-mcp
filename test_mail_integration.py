@@ -11,15 +11,21 @@ from apple_ecosystem_mcp.tools.mail import mail_search, mail_list_mailboxes
 
 
 def test_list_mailboxes():
-    """Test listing mailboxes - this exercises the fixed mailbox id coercion."""
+    """Test listing mailboxes - this exercises the fixed mailbox id coercion and path feature."""
     print("\n" + "=" * 60)
-    print("TEST 1: List Mailboxes (tests mailbox id coercion fix)")
+    print("TEST 1: List Mailboxes (tests mailbox id coercion and path hierarchy)")
     print("=" * 60)
     try:
         mailboxes = mail_list_mailboxes()
         print(f"✅ Found {len(mailboxes)} mailboxes")
+
+        # Check that path field exists
+        has_path = all('path' in mb for mb in mailboxes)
+        print(f"{'✅' if has_path else '⚠️ '} All mailboxes have 'path' field: {has_path}")
+
         for mb in mailboxes[:5]:  # Show first 5
-            print(f"   - {mb.get('name')} (id: {mb.get('id')}, account: {mb.get('account_name')})")
+            path_str = f" → {mb.get('path')}" if mb.get('path') else ""
+            print(f"   - {mb.get('name')}{path_str}")
         if len(mailboxes) > 5:
             print(f"   ... and {len(mailboxes) - 5} more")
         return True

@@ -82,12 +82,41 @@ on run argv
                 if mbId is "" then
                     set mbId to mbName
                 end if
-                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
+                set mbPath to my buildMailboxPath(mb)
+                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"path\":" & my jsonString(mbPath) & "}"
             end repeat
         end repeat
     end tell
     return output & "]"
 end run
+
+on buildMailboxPath(mb)
+    set pathItems to {}
+    set currentMb to mb
+    tell application "Mail"
+        repeat 100 times
+            try
+                set mbName to name of currentMb
+                set beginning of pathItems to mbName
+                set containerMb to container of currentMb
+                if containerMb is missing value then
+                    exit repeat
+                end if
+                try
+                    count of mailboxes of containerMb
+                    exit repeat
+                end try
+                set currentMb to containerMb
+            on error
+                exit repeat
+            end try
+        end repeat
+    end tell
+    set AppleScript's text item delimiters to "/"
+    set pathStr to pathItems as text
+    set AppleScript's text item delimiters to ""
+    return pathStr
+end buildMailboxPath
 
 on jsonString(s)
     if s is missing value then return "null"
