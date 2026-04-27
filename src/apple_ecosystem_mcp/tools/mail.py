@@ -187,9 +187,14 @@ on run argv
         set mbIdsIdx to mbIdsIdx + 1
     end repeat
 
+    set searchSenderStr to item mbIdsIdx of argv
+    set searchSender to searchSenderStr is "1"
+    set toAddr to item (mbIdsIdx + 1) of argv
+    set ccAddr to item (mbIdsIdx + 2) of argv
+
     -- Check if any filters are active
     set hasFilters to false
-    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" then
+    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" or toAddr is not "" or ccAddr is not "" then
         set hasFilters to true
     end if
 
@@ -276,8 +281,17 @@ on run argv
                                 if subj is "" then
                                     -- Skip messages with no subject.
                                 else
+                                    set snd to ""
+                                    if searchSender then
+                                        try
+                                            set snd to sender of msg as string
+                                        end try
+                                    end if
+
                                     set queryMatch to false
                                     if my containsCI(subj, qry) then
+                                        set queryMatch to true
+                                    else if searchSender and my containsCI(snd, qry) then
                                         set queryMatch to true
                                     else if searchBody then
                                         set bodyText to ""
@@ -343,7 +357,29 @@ on run argv
                                                 set fromMatch to my containsCI(snd, fromAddr)
                                             end if
 
-                                            if unreadMatch and flaggedMatch and attachMatch and fromMatch then
+                                            set toMatch to true
+                                            if toAddr is not "" then
+                                                set toAddresses to ""
+                                                try
+                                                    repeat with r in (to recipients of msg)
+                                                        set toAddresses to toAddresses & (address of r as string) & " "
+                                                    end repeat
+                                                end try
+                                                set toMatch to my containsCI(toAddresses, toAddr)
+                                            end if
+
+                                            set ccMatch to true
+                                            if ccAddr is not "" then
+                                                set ccAddresses to ""
+                                                try
+                                                    repeat with r in (cc recipients of msg)
+                                                        set ccAddresses to ccAddresses & (address of r as string) & " "
+                                                    end repeat
+                                                end try
+                                                set ccMatch to my containsCI(ccAddresses, ccAddr)
+                                            end if
+
+                                            if unreadMatch and flaggedMatch and attachMatch and fromMatch and toMatch and ccMatch then
                                                 set snd to ""
                                                 try
                                                     set snd to sender of msg as string
@@ -449,7 +485,7 @@ def mail_search(
         limit: Result limit (1-100, default 20)
         since: ISO date string for start of date range
         before: ISO date string for end of date range
-        search_fields: List of fields to search (default ["subject"]; can include "body")
+        search_fields: List of fields to search (default ["subject"]; can include "sender" and "body")
         filters: Optional dict with keys: from_addr, to_addr, cc_addr, unread (bool),
                  flagged (bool), has_attachments (bool), account_name, mailbox_ids (list)
     """
@@ -460,6 +496,7 @@ def mail_search(
     search_fields = search_fields or ["subject"]
 
     # Build args list for AppleScript
+    search_fields = [field.lower() for field in search_fields]
     args = [
         query,
         mailbox_id or "",
@@ -474,10 +511,13 @@ def mail_search(
         before or "",
     ]
 
-    # Add mailbox_ids list
     mailbox_ids = filters.get("mailbox_ids") or []
     args.append(str(len(mailbox_ids)))
     args.extend(mailbox_ids)
+
+    args.append("1" if "sender" in search_fields else "0")
+    args.append(filters.get("to_addr") or "")
+    args.append(filters.get("cc_addr") or "")
 
     raw = run_applescript(_SEARCH_SCRIPT, *args)
     data = _parse_json(raw) or []
