@@ -22,7 +22,6 @@
   "compatibility": {
     "platforms": ["darwin"]
   },
-  "privacy_policies": "https://github.com/abhinavag-svg/apple-ecosystem-mcp/blob/main/PRIVACY.md",
   "icon": "logo.svg",
   "license": "MIT"
 }
