@@ -66,7 +66,7 @@ def as_quote(value: str) -> str:
 
 
 def _cmd(script: str, args: Iterable[str]) -> list[str]:
-    return ["osascript", "-e", script, "--", *list(args)]
+    return ["/usr/bin/osascript", "-e", script, "--", *list(args)]
 
 
 def run_applescript(script: str, *args: str) -> str:
