@@ -77,54 +77,17 @@ on run argv
                 set mbName to name of mb
                 set mbId to ""
                 try
-                    set mbId to (id of mb) as string
+                    set mbId to id of mb as text
                 end try
                 if mbId is "" then
                     set mbId to mbName
                 end if
-                set mbPath to my buildMailboxPath(mb)
-                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"path\":" & my jsonString(mbPath) & "}"
+                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & "}"
             end repeat
         end repeat
     end tell
     return output & "]"
 end run
-
-on buildMailboxPath(mb)
-    set pathParts to {name of mb}
-    set currentMb to mb
-    tell application "Mail"
-        repeat
-            try
-                set containerMb to container of currentMb
-                if containerMb is missing value then
-                    exit repeat
-                end if
-                -- Check if container is an account (has property 'mailboxes')
-                try
-                    count of mailboxes of containerMb
-                    -- If we got here, it's an account, so stop
-                    exit repeat
-                on error
-                    -- Container is another mailbox, add to path
-                    set end of pathParts to name of containerMb
-                    set currentMb to containerMb
-                end try
-            on error
-                exit repeat
-            end try
-        end repeat
-    end tell
-    -- Reverse pathParts and join with /
-    set reversedParts to {}
-    repeat with i from (count of pathParts) down to 1
-        set end of reversedParts to item i of pathParts
-    end repeat
-    set AppleScript's text item delimiters to "/"
-    set pathStr to reversedParts as string
-    set AppleScript's text item delimiters to ""
-    return pathStr
-end buildMailboxPath
 
 on jsonString(s)
     if s is missing value then return "null"
@@ -211,7 +174,13 @@ on run argv
                 repeat with mb in mailboxes of acct
                     set shouldSearch to false
                     if mbIdsCount > 0 then
-                        set mbIdStr to id of mb as string
+                        set mbIdStr to ""
+                        try
+                            set mbIdStr to id of mb as text
+                        end try
+                        if mbIdStr is "" then
+                            set mbIdStr to mbName
+                        end if
                         repeat with mbIdToCheck in mbIds
                             if mbIdStr is mbIdToCheck then
                                 set shouldSearch to true
@@ -222,7 +191,16 @@ on run argv
                         set shouldSearch to true
                     else
                         try
-                            if (id of mb as string) is mbId then
+                            set mbIdStr to ""
+                            try
+                                set mbIdStr to id of mb as text
+                            end try
+                            if mbIdStr is "" then
+                                try
+                                    set mbIdStr to id of mb as Unicode text
+                                end try
+                            end if
+                            if mbIdStr is mbId then
                                 set shouldSearch to true
                             end if
                         end try
@@ -821,7 +799,14 @@ on run argv
         set dst to missing value
         repeat with acct in accounts
             repeat with mb in mailboxes of acct
-                if (id of mb as string) is targetMbId then
+                set mbIdStr to ""
+                try
+                    set mbIdStr to id of mb as text
+                end try
+                if mbIdStr is "" then
+                    set mbIdStr to mbName
+                end if
+                if mbIdStr is targetMbId then
                     set dst to mb
                     exit repeat
                 end if
