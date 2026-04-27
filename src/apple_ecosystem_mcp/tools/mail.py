@@ -186,6 +186,12 @@ on run argv
         set mbIdsIdx to mbIdsIdx + 1
     end repeat
 
+    -- Check if any filters are active
+    set hasFilters to false
+    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" then
+        set hasFilters to true
+    end if
+
     if qry is "" then
         return "[]"
     end if
@@ -208,7 +214,9 @@ on run argv
                             set mbIdStr to id of mb as text
                         end try
                         if mbIdStr is "" then
-                            set mbIdStr to mbName
+                            try
+                                set mbIdStr to name of mb as string
+                            end try
                         end if
                         repeat with mbIdToCheck in mbIds
                             if mbIdStr is mbIdToCheck then
@@ -219,26 +227,17 @@ on run argv
                     else if mbId is "" then
                         set shouldSearch to true
                     else
+                        set mbIdStr to ""
                         try
-                            set mbIdStr to ""
-                            try
-                                set mbIdStr to id of mb as text
-                            end try
-                            if mbIdStr is "" then
-                                try
-                                    set mbIdStr to id of mb as Unicode text
-                                end try
-                            end if
-                            if mbIdStr is mbId then
-                                set shouldSearch to true
-                            end if
+                            set mbIdStr to id of mb as text
                         end try
-                        if shouldSearch is false then
+                        if mbIdStr is "" then
                             try
-                                if (name of mb as string) is mbId then
-                                    set shouldSearch to true
-                                end if
+                                set mbIdStr to name of mb as string
                             end try
+                        end if
+                        if mbIdStr is mbId then
+                            set shouldSearch to true
                         end if
                     end if
 
@@ -251,7 +250,11 @@ on run argv
                         end try
 
                         set scanLim to mCount
-                        if scanLim > 5000 then set scanLim to 5000
+                        if hasFilters then
+                            if scanLim > 1000 then set scanLim to 1000
+                        else
+                            if scanLim > 5000 then set scanLim to 5000
+                        end if
 
                         repeat with offset_ from 0 to (scanLim - 1)
                             if count_ ≥ lim then exit repeat
