@@ -41,7 +41,7 @@ def test_run_applescript_calls_osascript_with_argv(mock_osascript):
     assert args0 == ["osascript", "-e", script, "--", "a", "b"]
     assert run_mock.call_args.kwargs["capture_output"] is True
     assert run_mock.call_args.kwargs["text"] is True
-    assert run_mock.call_args.kwargs["timeout"] == 30
+    assert run_mock.call_args.kwargs["timeout"] == 60
     assert run_mock.call_args.kwargs["check"] is False
 
 
