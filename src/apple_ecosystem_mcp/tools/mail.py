@@ -103,8 +103,9 @@ on buildMailboxPath(mb)
                     exit repeat
                 end if
                 try
-                    count of mailboxes of containerMb
-                    exit repeat
+                    if (count of mailboxes of containerMb) > 0 then
+                        exit repeat
+                    end if
                 end try
                 set currentMb to containerMb
             on error
