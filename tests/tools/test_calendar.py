@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -28,6 +29,14 @@ def _mk_run(monkeypatch, responses):
         mock = Mock(side_effect=list(responses))
     monkeypatch.setattr(cal, "run_applescript", mock)
     return mock
+
+
+def _local_naive(value: str) -> str:
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    return datetime.fromisoformat(value).astimezone().replace(tzinfo=None).strftime(
+        "%Y-%m-%dT%H:%M:%S"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +125,40 @@ def test_list_events_passes_args_via_argv_and_returns_records(monkeypatch):
     assert "calendar_uid" in out[0]
 
 
+def test_list_events_script_uses_overlap_predicate():
+    assert "start date < endDate and end date > startDate" in cal._LIST_EVENTS_SCRIPT
+
+
+def test_list_events_exposes_attendees(monkeypatch):
+    payload = json.dumps(
+        [
+            {
+                "uid": "ev-1",
+                "title": "Review",
+                "start": "2026-04-22T10:00:00",
+                "end": "2026-04-22T11:00:00",
+                "location": None,
+                "all_day": False,
+                "calendar_uid": "uid-1",
+                "calendar_name": "Work",
+                "attendees": ["a@example.com"],
+            }
+        ]
+    )
+    _mk_run(monkeypatch, payload)
+    out = cal.calendar_list_events("2026-04-22T00:00:00", "2026-04-23T00:00:00")
+    assert out[0]["attendees"] == ["a@example.com"]
+    assert out[0]["invitees"] == ["a@example.com"]
+
+
+def test_list_events_normalizes_z_and_offset_inputs(monkeypatch):
+    run_mock = _mk_run(monkeypatch, "[]")
+    cal.calendar_list_events("2026-04-22T17:00:00Z", "2026-04-22T11:30:00-07:00")
+    args = run_mock.call_args.args
+    assert args[1] == _local_naive("2026-04-22T17:00:00Z")
+    assert args[2] == _local_naive("2026-04-22T11:30:00-07:00")
+
+
 def test_list_events_calendar_uid_none_sent_as_empty_string(monkeypatch):
     run_mock = _mk_run(monkeypatch, "[]")
     cal.calendar_list_events("2026-04-22", "2026-04-23")
@@ -184,12 +227,14 @@ def test_get_event_returns_record(monkeypatch):
             "all_day": False,
             "calendar_uid": "uid-1",
             "calendar_name": "Work",
-            "invitees": [],
+            "attendees": ["a@example.com"],
         }
     )
     run_mock = _mk_run(monkeypatch, payload)
     out = cal.calendar_get_event("ev-1")
     assert out["uid"] == "ev-1"
+    assert out["attendees"] == ["a@example.com"]
+    assert out["invitees"] == ["a@example.com"]
     # Event id passed as positional argv, not interpolated.
     assert run_mock.call_args.args[1] == "ev-1"
 
@@ -277,6 +322,20 @@ def test_create_event_accepts_optional_fields(monkeypatch):
     assert args[7] == "a@x.com,b@x.com"
 
 
+def test_create_event_dedupes_invitees_and_normalizes_timezone(monkeypatch):
+    run_mock = _mk_run(monkeypatch, json.dumps({"uid": "ev-new"}))
+    cal.calendar_create_event(
+        "Review",
+        "2026-04-22T17:00:00Z",
+        "2026-04-22T18:00:00Z",
+        invitees=["A@x.com", "a@x.com", " b@x.com "],
+    )
+    args = run_mock.call_args.args
+    assert args[3] == _local_naive("2026-04-22T17:00:00Z")
+    assert args[4] == _local_naive("2026-04-22T18:00:00Z")
+    assert args[7] == "A@x.com,b@x.com"
+
+
 # ---------------------------------------------------------------------------
 # calendar_update_event
 # ---------------------------------------------------------------------------
@@ -346,6 +405,79 @@ def test_update_event_passes_only_supplied_fields(monkeypatch):
     assert update_args[2] == "Renamed"
     assert update_args[3] == ""  # start unchanged
     assert update_args[4] == ""  # end unchanged
+
+
+def test_update_event_supports_clear_location_and_notes(monkeypatch):
+    get_payload = json.dumps(
+        {
+            "uid": "ev-1",
+            "title": "t",
+            "start": "2026-04-22T09:00:00",
+            "end": "2026-04-22T10:00:00",
+            "location": "HQ",
+            "notes": "prep",
+            "all_day": False,
+            "calendar_uid": "w",
+            "calendar_name": "Work",
+            "invitees": [],
+        }
+    )
+    calendars_payload = json.dumps(
+        [{"name": "Work", "uid": "w", "account_name": "iCloud", "writable": True}]
+    )
+    update_payload = json.dumps({"uid": "ev-1"})
+    run_mock = _mk_run(monkeypatch, [get_payload, calendars_payload, update_payload])
+    out = cal.calendar_update_event("ev-1", clear_location=True, clear_notes=True)
+    assert out == {"uid": "ev-1", "success": True}
+    update_args = run_mock.call_args_list[2].args
+    assert update_args[5] == ""
+    assert update_args[6] == ""
+    assert update_args[8] == "true"
+    assert update_args[9] == "true"
+
+
+def test_update_event_rejects_clear_and_set_same_field(monkeypatch):
+    _mk_run(monkeypatch, "[]")
+    with pytest.raises(RuntimeError, match="location or clear_location"):
+        cal.calendar_update_event("ev-1", location="HQ", clear_location=True)
+    with pytest.raises(RuntimeError, match="notes or clear_notes"):
+        cal.calendar_update_event("ev-1", notes="prep", clear_notes=True)
+
+
+def test_update_event_dedupes_attendees_alias_and_normalizes_time(monkeypatch):
+    get_payload = json.dumps(
+        {
+            "uid": "ev-1",
+            "title": "t",
+            "start": "2026-04-22T09:00:00",
+            "end": "2026-04-22T10:00:00",
+            "location": None,
+            "notes": None,
+            "all_day": False,
+            "calendar_uid": "w",
+            "calendar_name": "Work",
+            "attendees": ["existing@x.com"],
+        }
+    )
+    calendars_payload = json.dumps(
+        [{"name": "Work", "uid": "w", "account_name": "iCloud", "writable": True}]
+    )
+    update_payload = json.dumps({"uid": "ev-1"})
+    run_mock = _mk_run(monkeypatch, [get_payload, calendars_payload, update_payload])
+    cal.calendar_update_event(
+        "ev-1",
+        start="2026-04-22T17:00:00Z",
+        attendees=["A@x.com", "a@x.com", " b@x.com "],
+    )
+    update_args = run_mock.call_args_list[2].args
+    assert update_args[3] == _local_naive("2026-04-22T17:00:00Z")
+    assert update_args[7] == "A@x.com,b@x.com"
+
+
+def test_update_event_rejects_both_invitees_and_attendees(monkeypatch):
+    _mk_run(monkeypatch, "[]")
+    with pytest.raises(RuntimeError, match="invitees or attendees"):
+        cal.calendar_update_event("ev-1", invitees=["a@x.com"], attendees=["b@x.com"])
 
 
 # ---------------------------------------------------------------------------

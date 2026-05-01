@@ -116,7 +116,7 @@ on run argv
             set cuid to uid of c
             if filterUID is "" or filterUID is cuid then
                 try
-                    set evs to (every event of c whose start date ≥ startDate and start date ≤ endDate)
+                    set evs to (every event of c whose start date < endDate and end date > startDate)
                 on error
                     set evs to {}
                 end try
@@ -135,7 +135,20 @@ on run argv
                     end try
                     set sd to start date of ev
                     set ed to end date of ev
-                    set row to "{\"uid\":" & my _js(u) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(cuid) & ",\"calendar_name\":" & my _js(name of c) & "}"
+                    set invList to {}
+                    try
+                        repeat with a in (attendees of ev)
+                            set addr to missing value
+                            try
+                                set addr to email of a
+                            end try
+                            if addr is not missing value and addr is not "" then set end of invList to my _js(addr)
+                        end repeat
+                    end try
+                    set AppleScript's text item delimiters to ","
+                    set invJoined to invList as string
+                    set AppleScript's text item delimiters to ""
+                    set row to "{\"uid\":" & my _js(u) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(cuid) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[" & invJoined & "],\"invitees\":[" & invJoined & "]}"
                     set end of items_ to row
                 end repeat
             end if
@@ -204,13 +217,17 @@ on run argv
                 set invList to {}
                 try
                     repeat with a in (attendees of ev)
-                        set end of invList to my _js(email of a)
+                        set addr to missing value
+                        try
+                            set addr to email of a
+                        end try
+                        if addr is not missing value and addr is not "" then set end of invList to my _js(addr)
                     end repeat
                 end try
                 set AppleScript's text item delimiters to ","
                 set invJoined to invList as string
                 set AppleScript's text item delimiters to ""
-                set out to "{\"uid\":" & my _js(targetUID) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"notes\":" & my _js(n) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(uid of c) & ",\"calendar_name\":" & my _js(name of c) & ",\"invitees\":[" & invJoined & "]}"
+                set out to "{\"uid\":" & my _js(targetUID) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"notes\":" & my _js(n) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(uid of c) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[" & invJoined & "],\"invitees\":[" & invJoined & "]}"
                 return out
             end if
         end repeat
@@ -293,6 +310,8 @@ on run argv
     set loc to item 5 of argv
     set notesText to item 6 of argv
     set inviteesCSV to item 7 of argv
+    set clearLocationFlag to item 8 of argv
+    set clearNotesFlag to item 9 of argv
 
     tell application "Calendar"
         set found to missing value
@@ -307,17 +326,38 @@ on run argv
         if titleText is not "" then set summary of found to titleText
         if startISO is not "" then set start date of found to my _parseISO(startISO)
         if endISO is not "" then set end date of found to my _parseISO(endISO)
-        if loc is not "" then set location of found to loc
-        if notesText is not "" then set description of found to notesText
+        if clearLocationFlag is "true" then
+            set location of found to ""
+        else if loc is not "" then
+            set location of found to loc
+        end if
+        if clearNotesFlag is "true" then
+            set description of found to ""
+        else if notesText is not "" then
+            set description of found to notesText
+        end if
         if inviteesCSV is not "" then
             set AppleScript's text item delimiters to ","
             set inviteeList to text items of inviteesCSV
             set AppleScript's text item delimiters to ""
+            set existingEmails to {}
+            try
+                repeat with a in (attendees of found)
+                    try
+                        set end of existingEmails to my _lower(email of a)
+                    end try
+                end repeat
+            end try
             tell found
                 repeat with addr in inviteeList
-                    try
-                        make new attendee at end of attendees with properties {email:addr as string}
-                    end try
+                    set addrText to addr as string
+                    set addrKey to my _lower(addrText)
+                    if existingEmails does not contain addrKey then
+                        try
+                            make new attendee at end of attendees with properties {email:addrText}
+                            set end of existingEmails to addrKey
+                        end try
+                    end if
                 end repeat
             end tell
         end if
@@ -346,6 +386,22 @@ on _parseISO(s)
     set time of d to hh * 3600 + mm * 60 + ss
     return d
 end _parseISO
+
+on _lower(s)
+    set upperChars to "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    set lowerChars to "abcdefghijklmnopqrstuvwxyz"
+    set out to ""
+    repeat with i from 1 to length of (s as string)
+        set ch to character i of (s as string)
+        set p to offset of ch in upperChars
+        if p > 0 then
+            set out to out & character p of lowerChars
+        else
+            set out to out & ch
+        end if
+    end repeat
+    return out
+end _lower
 """
 
 
@@ -385,6 +441,47 @@ def _parse_json(raw: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise RuntimeError("AppleScript returned invalid JSON") from exc
+
+
+def _normalize_calendar_iso(value: str) -> str:
+    """Normalize ISO inputs to local naive datetimes for AppleScript.
+
+    Contract: callers may pass YYYY-MM-DD, local naive datetimes, or datetimes
+    with an offset / trailing Z. Offset-aware values are converted to the
+    machine's local timezone and stripped of tzinfo because Calendar
+    AppleScript date construction uses local date components.
+    """
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
+    dt = _parse_iso(value)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _dedupe_emails(emails: list[str] | None) -> list[str]:
+    if not emails:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for email in emails:
+        normalized = email.strip()
+        if not normalized:
+            continue
+        key = normalized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+    return out
+
+
+def _with_attendees_alias(record: dict) -> dict:
+    if "attendees" not in record and "invitees" in record:
+        record["attendees"] = record["invitees"]
+    if "invitees" not in record and "attendees" in record:
+        record["invitees"] = record["attendees"]
+    return record
 
 
 def _calendars_cached() -> list[dict]:
@@ -443,17 +540,20 @@ def calendar_list_events(
     calendar_uid: str | None = None,
     limit: int = LIST_EVENTS_DEFAULT_LIMIT,
 ) -> list[dict]:
-    """List calendar events in an ISO 8601 time range, optionally filtered by calendar UID."""
-    # Validate datetimes before invoking AppleScript.
-    _parse_iso(start)
-    _parse_iso(end)
+    """List calendar events overlapping an ISO 8601 time range.
+
+    Inputs with offsets or trailing Z are converted to local naive datetimes
+    before they are passed to AppleScript.
+    """
+    start_norm = _normalize_calendar_iso(start)
+    end_norm = _normalize_calendar_iso(end)
 
     capped = max(1, min(int(limit), LIST_EVENTS_MAX_LIMIT))
-    raw = run_applescript(_LIST_EVENTS_SCRIPT, start, end, calendar_uid or "")
+    raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "")
     data = _parse_json(raw)
     if not isinstance(data, list):
         raise RuntimeError("Unexpected events payload")
-    return data[:capped]
+    return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Event", readOnlyHint=True))
@@ -465,7 +565,7 @@ def calendar_get_event(event_id: str) -> dict:
         raise RuntimeError("Event not found")
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected event payload")
-    return data
+    return _with_attendees_alias(data)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Create Event"))
@@ -478,18 +578,22 @@ def calendar_create_event(
     notes: str | None = None,
     invitees: list[str] | None = None,
 ) -> dict:
-    """Create a calendar event; rejects non-writable calendars."""
-    _parse_iso(start)
-    _parse_iso(end)
+    """Create a calendar event; rejects non-writable calendars.
+
+    Inputs with offsets or trailing Z are converted to local naive datetimes
+    before they are passed to AppleScript.
+    """
+    start_norm = _normalize_calendar_iso(start)
+    end_norm = _normalize_calendar_iso(end)
     _require_writable_uid(calendar_uid)
 
-    invitees_csv = ",".join(invitees) if invitees else ""
+    invitees_csv = ",".join(_dedupe_emails(invitees))
     raw = run_applescript(
         _CREATE_EVENT_SCRIPT,
         calendar_uid or "",
         title,
-        start,
-        end,
+        start_norm,
+        end_norm,
         location or "",
         notes or "",
         invitees_csv,
@@ -509,12 +613,28 @@ def calendar_update_event(
     location: str | None = None,
     notes: str | None = None,
     invitees: list[str] | None = None,
+    attendees: list[str] | None = None,
+    clear_location: bool = False,
+    clear_notes: bool = False,
 ) -> dict:
-    """Update an existing event by UID (only provided fields are changed)."""
+    """Update an existing event by UID (only provided fields are changed).
+
+    ``clear_location`` and ``clear_notes`` explicitly blank those fields.
+    ``attendees`` is accepted as an alias for the older ``invitees`` parameter;
+    new attendees are de-duplicated before AppleScript sees them.
+    """
+    start_norm = ""
     if start is not None:
-        _parse_iso(start)
+        start_norm = _normalize_calendar_iso(start)
+    end_norm = ""
     if end is not None:
-        _parse_iso(end)
+        end_norm = _normalize_calendar_iso(end)
+    if clear_location and location is not None:
+        raise RuntimeError("Use either location or clear_location, not both")
+    if clear_notes and notes is not None:
+        raise RuntimeError("Use either notes or clear_notes, not both")
+    if invitees is not None and attendees is not None:
+        raise RuntimeError("Use either invitees or attendees, not both")
 
     # Writable check: locate the event's calendar via get_event so we refuse
     # edits on read-only calendars. Cheap because the AppleScript scans already.
@@ -525,16 +645,19 @@ def calendar_update_event(
     cal_uid = current_data.get("calendar_uid") if isinstance(current_data, dict) else None
     _require_writable_uid(cal_uid)
 
-    invitees_csv = ",".join(invitees) if invitees else ""
+    attendee_values = attendees if attendees is not None else invitees
+    invitees_csv = ",".join(_dedupe_emails(attendee_values))
     raw = run_applescript(
         _UPDATE_EVENT_SCRIPT,
         event_id,
         title or "",
-        start or "",
-        end or "",
+        start_norm,
+        end_norm,
         location or "",
         notes or "",
         invitees_csv,
+        "true" if clear_location else "false",
+        "true" if clear_notes else "false",
     )
     data = _parse_json(raw)
     if not isinstance(data, dict) or "uid" not in data:
@@ -579,7 +702,7 @@ def calendar_find_free_time(
     if duration_minutes <= 0:
         raise RuntimeError("duration_minutes must be positive")
 
-    day = _parse_iso(date).date()
+    day = datetime.fromisoformat(_normalize_calendar_iso(date)).date()
     window_start = datetime.combine(day, datetime.min.time()).replace(hour=working_hours_start)
     window_end = datetime.combine(day, datetime.min.time()).replace(hour=0) + timedelta(hours=working_hours_end)
 
