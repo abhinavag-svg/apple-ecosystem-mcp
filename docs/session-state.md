@@ -3,11 +3,25 @@
 Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
-- **Last changed:** 2026-04-23
-- **Current version:** v0.1.4 (PyPI + GitHub released)
-- **Next TODO:** Pick from high-value backlog: `MAIL-001` or `CAL-001` or `TST-001`
+- **Last changed:** 2026-05-01
+- **Current version:** v0.3.0 (PyPI + GitHub released)
+- **Next TODO:** Remaining features: `PKG-002`, `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
+
+### Session 3 (2026-05-01, v0.3.0 feature release)
+- **What changed:**
+  - Completed all high-value feature TODOs: MAIL-001-006, CAL-001-004, CON-001-003, REM-001-003, ICLD-001-003, PKG-001 (21/26 items).
+  - Mail: Smart mailbox hierarchy, attachment metadata (`{name, size_bytes, mime_type}`), and date filtering (`since`/`before` ISO).
+  - Calendar: Event overlap logic, clearable fields, attendee management with timezone handling.
+  - Contacts: Native predicate search with fallback, structured email/phone access, group membership filtering.
+  - Reminders: List targeting by stable ID, permission error standardization, metadata (recurrence/tags/priority).
+  - iCloud: Deterministic filename search with bounded os.walk, binary-safe base64 read/write, stat/mkdir helpers.
+  - All subsystems tested: 64 mail tests, 47 iCloud tests, 22 reminders tests pass.
+  - Version bump: 0.2.1 → 0.3.0, manifest.json and pyproject.toml aligned.
+- **Blockers:** None; all tests passing.
+- **Next steps:**
+  - Remaining low-priority items: PKG-002/003 (DXT cache busting, diagnostics), TST-001/002/003 (regression/contract tests).
 
 ### Session 2 (2026-04-23, post-release)
 - **What changed:**
