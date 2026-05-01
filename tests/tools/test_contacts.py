@@ -24,6 +24,9 @@ def test_contacts_search_returns_canonical_shape(monkeypatch):
                 "email": "ada@example.com",
                 "phone": "+1-555-0100",
                 "company": "Analytical",
+                "emails": [{"label": "work", "value": "ada@example.com"}],
+                "phones": [{"label": "mobile", "value": "+1-555-0100"}],
+                "groups": ["Mathematicians"],
             }
         ]
     )
@@ -37,12 +40,16 @@ def test_contacts_search_returns_canonical_shape(monkeypatch):
             "email": "ada@example.com",
             "phone": "+1-555-0100",
             "company": "Analytical",
+            "emails": [{"label": "work", "value": "ada@example.com"}],
+            "phones": [{"label": "mobile", "value": "+1-555-0100"}],
+            "groups": ["Mathematicians"],
         }
     ]
-    # argv[0] is the script, args[1] is query, args[2] is limit (as string)
+    # argv[0] is the script, args[1] is query, args[2] is limit (as string), args[3] is group.
     call = run_mock.call_args
     assert call.args[1] == "Ada"
     assert call.args[2] == "10"
+    assert call.args[3] == ""
 
 
 def test_contacts_search_default_limit_is_10(monkeypatch):
@@ -70,6 +77,26 @@ def test_contacts_search_enforces_slice(monkeypatch):
     assert len(out) == 5
 
 
+def test_contacts_search_passes_group_filter(monkeypatch):
+    run_mock = _patch_run(monkeypatch, "[]")
+    contacts.contacts_search("Ada", group="Friends")
+    assert run_mock.call_args.args[1] == "Ada"
+    assert run_mock.call_args.args[3] == "Friends"
+
+
+def test_contacts_search_allows_empty_query_with_group(monkeypatch):
+    run_mock = _patch_run(monkeypatch, "[]")
+    contacts.contacts_search("", group="Friends")
+    assert run_mock.call_args.args[1] == ""
+    assert run_mock.call_args.args[3] == "Friends"
+
+
+def test_contacts_search_script_prefers_native_predicates_with_fallback():
+    assert "my nativeMatches(q)" in contacts._SEARCH_SCRIPT
+    assert "on error" in contacts._SEARCH_SCRIPT
+    assert "set search_people to people" in contacts._SEARCH_SCRIPT
+
+
 def test_contacts_search_missing_value_normalized(monkeypatch):
     payload = json.dumps(
         [
@@ -90,6 +117,9 @@ def test_contacts_search_missing_value_normalized(monkeypatch):
     assert out[0]["email"] is None
     assert out[0]["phone"] is None
     assert out[0]["company"] is None
+    assert out[0]["emails"] == []
+    assert out[0]["phones"] == []
+    assert out[0]["groups"] == []
 
 
 def test_contacts_search_uses_argv_not_interpolation(monkeypatch):
@@ -112,8 +142,12 @@ def test_contacts_get_returns_canonical_record(monkeypatch):
             "company": "Analytical",
             "notes": "Hello",
             "birthday": "1815-12-10T00:00:00",
-            "emails": ["a@example.com", "b@example.com"],
-            "phones": ["+1-555-0100"],
+            "emails": [
+                {"label": "work", "value": "a@example.com"},
+                {"label": "home", "value": "b@example.com"},
+            ],
+            "phones": [{"label": "mobile", "value": "+1-555-0100"}],
+            "groups": ["Friends", "Work"],
             "addresses": ["10 Downing St, London"],
         }
     )
@@ -122,8 +156,14 @@ def test_contacts_get_returns_canonical_record(monkeypatch):
     assert record["id"] == "UUID-1"
     assert record["first"] == "Ada"
     assert record["last"] == "Lovelace"
-    assert record["emails"] == ["a@example.com", "b@example.com"]
-    assert record["phones"] == ["+1-555-0100"]
+    assert record["email"] == "a@example.com"
+    assert record["phone"] == "+1-555-0100"
+    assert record["emails"] == [
+        {"label": "work", "value": "a@example.com"},
+        {"label": "home", "value": "b@example.com"},
+    ]
+    assert record["phones"] == [{"label": "mobile", "value": "+1-555-0100"}]
+    assert record["groups"] == ["Friends", "Work"]
     assert record["addresses"] == ["10 Downing St, London"]
     assert record["birthday"] == "1815-12-10T00:00:00"
     assert record["notes"] == "Hello"
@@ -143,6 +183,7 @@ def test_contacts_get_truncates_long_notes(monkeypatch):
             "birthday": None,
             "emails": [],
             "phones": [],
+            "groups": [],
             "addresses": [],
         }
     )
@@ -165,6 +206,7 @@ def test_contacts_get_normalizes_missing_fields(monkeypatch):
             "birthday": "missing value",
             "emails": ["", "missing value"],
             "phones": [],
+            "groups": ["", "missing value", "Friends"],
             "addresses": ["", ""],
         }
     )
@@ -176,7 +218,28 @@ def test_contacts_get_normalizes_missing_fields(monkeypatch):
     assert record["birthday"] is None
     assert record["emails"] == []
     assert record["phones"] == []
+    assert record["groups"] == ["Friends"]
     assert record["addresses"] == []
+
+
+def test_contacts_get_normalizes_legacy_string_emails_and_phones(monkeypatch):
+    payload = json.dumps(
+        {
+            "id": "UUID-LEGACY",
+            "first": "Ada",
+            "last": None,
+            "company": None,
+            "notes": "",
+            "birthday": None,
+            "emails": ["ada@example.com"],
+            "phones": ["+1-555-0100"],
+            "addresses": [],
+        }
+    )
+    _patch_run(monkeypatch, payload)
+    record = contacts.contacts_get("UUID-LEGACY")
+    assert record["emails"] == [{"label": None, "value": "ada@example.com"}]
+    assert record["phones"] == [{"label": None, "value": "+1-555-0100"}]
 
 
 def test_contacts_create_returns_id_and_success(monkeypatch):

@@ -22,46 +22,122 @@ def _nn(value):
     return value
 
 
+def _normalize_labeled_items(items) -> list[dict]:
+    """Normalize legacy string lists and structured AppleScript rows."""
+    normalized: list[dict] = []
+    for item in items or []:
+        if isinstance(item, dict):
+            value = _nn(item.get("value"))
+            if value:
+                normalized.append({"label": _nn(item.get("label")), "value": value})
+        else:
+            value = _nn(item)
+            if value:
+                normalized.append({"label": None, "value": value})
+    return normalized
+
+
+def _first_labeled_value(items: list[dict]) -> str | None:
+    return items[0]["value"] if items else None
+
+
 _SEARCH_SCRIPT = r"""
 on run argv
     set q to item 1 of argv
     set lim to (item 2 of argv) as integer
-    if q is "" then return "[]"
+    set group_name to item 3 of argv
+    if q is "" and group_name is "" then return "[]"
     set output to {}
     tell application "Contacts"
+        if group_name is "" then
+            set search_people to people
+            if q is not "" then
+                try
+                    set search_people to my nativeMatches(q)
+                on error
+                    set search_people to people
+                end try
+            end if
+        else
+            set search_people to {}
+            repeat with g in groups
+                if my sameCI(name of g, group_name) then
+                    set search_people to people of g
+                    exit repeat
+                end if
+            end repeat
+        end if
+
         set count_ to 0
-        repeat with p in people
+        set seen_ids to {}
+        repeat with p in search_people
             if count_ ≥ lim then exit repeat
             set pid to id of p
-            set pfirst to ""
-            try
-                set pfirst to first name of p as string
-            end try
-            set plast to ""
-            try
-                set plast to last name of p as string
-            end try
-            set porg to ""
-            try
-                set porg to organization of p as string
-            end try
-            set pemail to ""
-            try
-                if (count of emails of p) > 0 then set pemail to value of first email of p as string
-            end try
-            set pphone to ""
-            try
-                if (count of phones of p) > 0 then set pphone to value of first phone of p as string
-            end try
-
-            if my containsCI(pfirst, q) or my containsCI(plast, q) or my containsCI((pfirst & " " & plast), q) or my containsCI(porg, q) or my containsCI(pemail, q) or my containsCI(pphone, q) then
-                set end of output to {pid, pfirst, plast, pemail, pphone, porg}
-                set count_ to count_ + 1
+            if seen_ids does not contain pid then
+                set end of seen_ids to pid
+                if q is "" or my contactMatches(p, q) then
+                    set pfirst to ""
+                    try
+                        set pfirst to first name of p as string
+                    end try
+                    set plast to ""
+                    try
+                        set plast to last name of p as string
+                    end try
+                    set porg to ""
+                    try
+                        set porg to organization of p as string
+                    end try
+                    set email_list to my labeledEmails(p)
+                    set phone_list to my labeledPhones(p)
+                    set group_list to my groupNamesForPerson(p)
+                    set end of output to {pid, pfirst, plast, my firstValue(email_list), my firstValue(phone_list), porg, email_list, phone_list, group_list}
+                    set count_ to count_ + 1
+                end if
             end if
         end repeat
     end tell
     return my jsonify(output)
 end run
+
+on nativeMatches(q)
+    tell application "Contacts"
+        set matches to {}
+        set matches to matches & (people whose first name contains q)
+        set matches to matches & (people whose last name contains q)
+        set matches to matches & (people whose organization contains q)
+        set matches to matches & (people whose value of emails contains q)
+        set matches to matches & (people whose value of phones contains q)
+        return matches
+    end tell
+end nativeMatches
+
+on contactMatches(p, q)
+    set pfirst to ""
+    try
+        set pfirst to first name of p as string
+    end try
+    set plast to ""
+    try
+        set plast to last name of p as string
+    end try
+    set porg to ""
+    try
+        set porg to organization of p as string
+    end try
+    if my containsCI(pfirst, q) or my containsCI(plast, q) or my containsCI((pfirst & " " & plast), q) or my containsCI(porg, q) then return true
+    try
+        repeat with e in emails of p
+            if my containsCI(value of e, q) then return true
+        end repeat
+    end try
+    try
+        repeat with ph in phones of p
+            if my containsCI(value of ph, q) then return true
+        end repeat
+    end try
+    return false
+end contactMatches
 
 on containsCI(hay, needle)
     try
@@ -72,6 +148,73 @@ on containsCI(hay, needle)
         return false
     end try
 end containsCI
+
+on sameCI(left_, right_)
+    try
+        ignoring case
+            return ((left_ as string) is (right_ as string))
+        end ignoring
+    on error
+        return false
+    end try
+end sameCI
+
+on firstValue(labeled_items)
+    try
+        if (count of labeled_items) > 0 then return item 2 of item 1 of labeled_items
+    end try
+    return ""
+end firstValue
+
+on labeledEmails(p)
+    set email_list to {}
+    try
+        repeat with e in emails of p
+            set elabel to ""
+            try
+                set elabel to label of e as string
+            end try
+            set evalue to ""
+            try
+                set evalue to value of e as string
+            end try
+            set end of email_list to {elabel, evalue}
+        end repeat
+    end try
+    return email_list
+end labeledEmails
+
+on labeledPhones(p)
+    set phone_list to {}
+    try
+        repeat with ph in phones of p
+            set plabel to ""
+            try
+                set plabel to label of ph as string
+            end try
+            set pvalue to ""
+            try
+                set pvalue to value of ph as string
+            end try
+            set end of phone_list to {plabel, pvalue}
+        end repeat
+    end try
+    return phone_list
+end labeledPhones
+
+on groupNamesForPerson(p)
+    set group_list to {}
+    tell application "Contacts"
+        try
+            repeat with g in groups
+                try
+                    if (people of g) contains p then set end of group_list to name of g
+                end try
+            end repeat
+        end try
+    end tell
+    return group_list
+end groupNamesForPerson
 
 on jsonify(rows)
     set out to "["
@@ -88,11 +231,44 @@ on jsonify(rows)
             "\"last\":" & my jstr(item 3 of r) & "," & ¬
             "\"email\":" & my jstr(item 4 of r) & "," & ¬
             "\"phone\":" & my jstr(item 5 of r) & "," & ¬
-            "\"company\":" & my jstr(item 6 of r) & "}"
+            "\"company\":" & my jstr(item 6 of r) & "," & ¬
+            "\"emails\":" & my jlabeled(item 7 of r) & "," & ¬
+            "\"phones\":" & my jlabeled(item 8 of r) & "," & ¬
+            "\"groups\":" & my jarr(item 9 of r) & "}"
     end repeat
     set out to out & "]"
     return out
 end jsonify
+
+on jlabeled(xs)
+    set out to "["
+    set first_item to true
+    repeat with x in xs
+        if first_item then
+            set first_item to false
+        else
+            set out to out & ","
+        end if
+        set out to out & "{" & "\"label\":" & my jstr(item 1 of x) & "," & "\"value\":" & my jstr(item 2 of x) & "}"
+    end repeat
+    set out to out & "]"
+    return out
+end jlabeled
+
+on jarr(xs)
+    set out to "["
+    set first_item to true
+    repeat with x in xs
+        if first_item then
+            set first_item to false
+        else
+            set out to out & ","
+        end if
+        set out to out & my jstr(x)
+    end repeat
+    set out to out & "]"
+    return out
+end jarr
 
 on jstr(v)
     try
@@ -144,18 +320,9 @@ on run argv
         try
             set pbday to (birth date of p) as «class isot» as string
         end try
-        set email_list to {}
-        try
-            repeat with e in emails of p
-                set end of email_list to value of e
-            end repeat
-        end try
-        set phone_list to {}
-        try
-            repeat with ph in phones of p
-                set end of phone_list to value of ph
-            end repeat
-        end try
+        set email_list to my labeledEmails(p)
+        set phone_list to my labeledPhones(p)
+        set group_list to my groupNamesForPerson(p)
         set addr_list to {}
         try
             repeat with a in addresses of p
@@ -179,11 +346,77 @@ on run argv
         "\"company\":" & my jstr(porg) & "," & ¬
         "\"notes\":" & my jstr(pnote) & "," & ¬
         "\"birthday\":" & my jstr(pbday) & "," & ¬
-        "\"emails\":" & my jarr(email_list) & "," & ¬
-        "\"phones\":" & my jarr(phone_list) & "," & ¬
+        "\"emails\":" & my jlabeled(email_list) & "," & ¬
+        "\"phones\":" & my jlabeled(phone_list) & "," & ¬
+        "\"groups\":" & my jarr(group_list) & "," & ¬
         "\"addresses\":" & my jarr(addr_list) & "}"
     return out
 end run
+
+on labeledEmails(p)
+    set email_list to {}
+    try
+        repeat with e in emails of p
+            set elabel to ""
+            try
+                set elabel to label of e as string
+            end try
+            set evalue to ""
+            try
+                set evalue to value of e as string
+            end try
+            set end of email_list to {elabel, evalue}
+        end repeat
+    end try
+    return email_list
+end labeledEmails
+
+on labeledPhones(p)
+    set phone_list to {}
+    try
+        repeat with ph in phones of p
+            set plabel to ""
+            try
+                set plabel to label of ph as string
+            end try
+            set pvalue to ""
+            try
+                set pvalue to value of ph as string
+            end try
+            set end of phone_list to {plabel, pvalue}
+        end repeat
+    end try
+    return phone_list
+end labeledPhones
+
+on groupNamesForPerson(p)
+    set group_list to {}
+    tell application "Contacts"
+        try
+            repeat with g in groups
+                try
+                    if (people of g) contains p then set end of group_list to name of g
+                end try
+            end repeat
+        end try
+    end tell
+    return group_list
+end groupNamesForPerson
+
+on jlabeled(xs)
+    set out to "["
+    set first_item to true
+    repeat with x in xs
+        if first_item then
+            set first_item to false
+        else
+            set out to out & ","
+        end if
+        set out to out & "{" & "\"label\":" & my jstr(item 1 of x) & "," & "\"value\":" & my jstr(item 2 of x) & "}"
+    end repeat
+    set out to out & "]"
+    return out
+end jlabeled
 
 on jarr(xs)
     set out to "["
@@ -333,24 +566,31 @@ end replace
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Search Contacts", readOnlyHint=True))
-def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT) -> list[dict]:
+def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT, group: str | None = None) -> list[dict]:
     """Search contacts by name, email, phone, or company."""
     capped = max(1, min(int(limit), _SEARCH_LIMIT_MAX))
-    raw = run_applescript(_SEARCH_SCRIPT, query, str(capped))
+    raw = run_applescript(_SEARCH_SCRIPT, query, str(capped), group or "")
     try:
         parsed = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
         raise RuntimeError("Failed to parse Contacts search response") from e
     results: list[dict] = []
     for row in parsed[:capped]:
+        emails = _normalize_labeled_items(row.get("emails"))
+        phones = _normalize_labeled_items(row.get("phones"))
+        email = _nn(row.get("email")) or _first_labeled_value(emails)
+        phone = _nn(row.get("phone")) or _first_labeled_value(phones)
         results.append(
             {
                 "id": row.get("id"),
                 "first": _nn(row.get("first")),
                 "last": _nn(row.get("last")),
-                "email": _nn(row.get("email")),
-                "phone": _nn(row.get("phone")),
+                "email": email,
+                "phone": phone,
                 "company": _nn(row.get("company")),
+                "emails": emails,
+                "phones": phones,
+                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
             }
         )
     return results
@@ -372,17 +612,21 @@ def contacts_get(contact_id: str) -> dict:
         notes = notes[:_NOTES_MAX_CHARS] + f"[truncated — {omitted} chars omitted]"
         truncated = True
 
-    emails = [e for e in (data.get("emails") or []) if _nn(e)]
-    phones = [p for p in (data.get("phones") or []) if _nn(p)]
+    emails = _normalize_labeled_items(data.get("emails"))
+    phones = _normalize_labeled_items(data.get("phones"))
     addresses = [a for a in (data.get("addresses") or []) if _nn(a)]
+    groups = [g for g in (data.get("groups") or []) if _nn(g)]
 
     result = {
         "id": data.get("id") or contact_id,
         "first": _nn(data.get("first")),
         "last": _nn(data.get("last")),
         "company": _nn(data.get("company")),
+        "email": _first_labeled_value(emails),
+        "phone": _first_labeled_value(phones),
         "emails": emails,
         "phones": phones,
+        "groups": groups,
         "addresses": addresses,
         "birthday": _nn(data.get("birthday")),
         "notes": notes,
