@@ -145,6 +145,62 @@ git checkout main && git pull   # Merge phases 2–4 first
 # ... create manifest.json, .dxt ...
 ```
 
+## Phase 6: Release Checklist (MANDATORY)
+
+**Do not skip steps. Verify each before proceeding.**
+
+### Pre-Release
+- [ ] All tests pass: `uv run pytest tests/ -k "not live" -v`
+- [ ] No uncommitted changes: `git status` returns clean
+- [ ] docs/session-state.md updated with current session summary
+
+### Version Bump
+- [ ] Update `pyproject.toml`: `version = "X.Y.Z"`
+- [ ] Update `manifest.json`: `version` and uvx `args` with new version
+- [ ] Update `PUBLISH_PYPI.sh`: Replace old version with new version (3 places)
+- [ ] Commit: `git commit -m "chore: version bump X.Y.Z → A.B.C, update session state"`
+
+### Build & Tag
+- [ ] Run: `uv build`
+- [ ] Verify artifacts exist: `dist/apple_ecosystem_mcp-A.B.C.tar.gz` and `.whl`
+- [ ] Create git tag: `git tag -a vA.B.C -m "chore: release vA.B.C — [summary]"`
+- [ ] Push: `git push origin main`
+- [ ] Push tag: `git push origin vA.B.C`
+
+### GitHub Release
+- [ ] Create release via `gh release create vA.B.C` with comprehensive notes
+- [ ] **[CRITICAL] Create .dxt file:**
+  ```bash
+  mkdir -p dxt
+  cd dxt
+  zip -r apple-ecosystem-mcp.dxt ../manifest.json ../logo.svg ../server/
+  ```
+- [ ] **[CRITICAL] Upload .dxt to release:** `gh release upload vA.B.C dxt/apple-ecosystem-mcp.dxt --clobber`
+- [ ] Upload wheel: `gh release upload vA.B.C dist/apple_ecosystem_mcp-A.B.C-py3-none-any.whl --clobber`
+- [ ] Upload tarball: `gh release upload vA.B.C dist/apple_ecosystem_mcp-A.B.C.tar.gz --clobber`
+
+### Verification (STOP HERE and verify all 3 assets)
+```bash
+gh release view vA.B.C --json assets -q '.assets[] | "\(.name) (\(.size | tonumber / 1024 | floor) KB)"'
+```
+**Must show:**
+- `apple-ecosystem-mcp.dxt` (~2 KB)
+- `apple_ecosystem_mcp-A.B.C-py3-none-any.whl` (~30-40 KB)
+- `apple_ecosystem_mcp-A.B.C.tar.gz` (~300-400 KB)
+
+### PyPI Publish
+- [ ] Set token: `export PYPI_TOKEN="pypi-YOUR_TOKEN"`
+- [ ] Publish: `bash PUBLISH_PYPI.sh`
+- [ ] Verify on PyPI: https://pypi.org/project/apple-ecosystem-mcp/
+
+### Final Verification
+- [ ] GitHub release URL works: https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases/tag/vA.B.C
+- [ ] All 3 assets downloadable from release
+- [ ] PyPI shows new version: https://pypi.org/project/apple-ecosystem-mcp/
+- [ ] Commit all version-bump changes: nothing left uncommitted
+
+**Do not consider release complete until all checks pass and are verified.**
+
 ## Running Tests
 
 ```bash

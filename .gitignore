@@ -9,6 +9,7 @@ yarn-error.log*
 # Build artifacts
 dist/
 build/
+dxt/
 *.tsbuildinfo
 
 # Environment & Secrets
