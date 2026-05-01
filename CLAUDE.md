@@ -169,11 +169,13 @@ git checkout main && git pull   # Merge phases 2–4 first
 
 ### GitHub Release
 - [ ] Create release via `gh release create vA.B.C` with comprehensive notes
-- [ ] **[CRITICAL] Create .dxt file:**
+- [ ] **[CRITICAL] Create .dxt file (correct ZIP structure - NO relative paths):**
   ```bash
-  mkdir -p dxt
-  cd dxt
-  zip -r apple-ecosystem-mcp.dxt ../manifest.json ../logo.svg ../server/
+  rm -rf dxt && mkdir -p dxt/contents
+  cp manifest.json logo.svg dxt/contents/
+  cp -r server dxt/contents/
+  cd dxt/contents && zip -r ../apple-ecosystem-mcp.dxt . && cd ../..
+  # Result: ZIP must contain (at root): manifest.json, logo.svg, server/
   ```
 - [ ] **[CRITICAL] Upload .dxt to release:** `gh release upload vA.B.C dxt/apple-ecosystem-mcp.dxt --clobber`
 - [ ] Upload wheel: `gh release upload vA.B.C dist/apple_ecosystem_mcp-A.B.C-py3-none-any.whl --clobber`

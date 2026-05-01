@@ -77,10 +77,13 @@ echo ""
 
 # Create .dxt
 echo "📦 Building .dxt file..."
-mkdir -p dxt
-cd dxt
-zip -q -r "apple-ecosystem-mcp.dxt" ../manifest.json ../logo.svg ../server/
-cd ..
+rm -rf dxt
+mkdir -p dxt/contents
+cp manifest.json logo.svg dxt/contents/
+cp -r server dxt/contents/
+cd dxt/contents
+zip -q -r ../apple-ecosystem-mcp.dxt .
+cd ../..
 ls -lh "dxt/apple-ecosystem-mcp.dxt"
 echo "✅ .dxt file created"
 echo ""
