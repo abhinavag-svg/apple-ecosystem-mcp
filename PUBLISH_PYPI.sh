@@ -1,5 +1,5 @@
 #!/bin/bash
-# PyPI Publishing Script for apple-ecosystem-mcp v0.2.0
+# PyPI Publishing Script for apple-ecosystem-mcp v0.3.0
 #
 # Usage:
 #   1. Set your PyPI token:
@@ -9,7 +9,7 @@
 
 set -e
 
-echo "🚀 Publishing apple-ecosystem-mcp v0.2.0 to PyPI..."
+echo "🚀 Publishing apple-ecosystem-mcp v0.3.0 to PyPI..."
 echo ""
 
 # Check for token
@@ -26,18 +26,18 @@ if [ -z "$PYPI_TOKEN" ]; then
 fi
 
 # Verify build artifacts exist
-if [ ! -f "dist/apple_ecosystem_mcp-0.2.0.tar.gz" ] || [ ! -f "dist/apple_ecosystem_mcp-0.2.0-py3-none-any.whl" ]; then
+if [ ! -f "dist/apple_ecosystem_mcp-0.3.0.tar.gz" ] || [ ! -f "dist/apple_ecosystem_mcp-0.3.0-py3-none-any.whl" ]; then
     echo "⚠️  Build artifacts not found. Building..."
     uv build
 fi
 
 echo "✅ Build artifacts ready:"
-ls -lh dist/apple_ecosystem_mcp-0.2.0*
+ls -lh dist/apple_ecosystem_mcp-0.3.0*
 echo ""
 
 # Publish
 echo "📤 Publishing to PyPI..."
-python -m twine upload dist/apple_ecosystem_mcp-0.2.0* \
+python -m twine upload dist/apple_ecosystem_mcp-0.3.0* \
     --username __token__ \
     --password "$PYPI_TOKEN" \
     --non-interactive
@@ -47,7 +47,7 @@ echo "✅ Published successfully!"
 echo ""
 echo "📦 Package details:"
 echo "   - Name: apple-ecosystem-mcp"
-echo "   - Version: 0.2.0"
+echo "   - Version: 0.3.0"
 echo "   - PyPI: https://pypi.org/project/apple-ecosystem-mcp/"
 echo ""
 echo "🎉 Release complete!"
