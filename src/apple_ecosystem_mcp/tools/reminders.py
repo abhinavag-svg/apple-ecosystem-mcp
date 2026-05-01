@@ -2,11 +2,40 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from typing import Any
 
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript
 from ..server import mcp
+
+_PERMISSION_DENIED_SENTINEL = "__APPLE_ECOSYSTEM_MCP_REMINDERS_PERMISSION_DENIED__"
+_PERMISSION_DENIED_MESSAGE = (
+    "Permission denied: Reminders automation is not authorized. Grant access in "
+    "System Settings > Privacy & Security > Automation, then retry."
+)
+
+
+def _is_permission_error_message(message: str) -> bool:
+    lowered = message.lower()
+    return (
+        "-1743" in message
+        or "not authorized" in lowered
+        or "not authorised" in lowered
+        or "not allowed to send apple events" in lowered
+    )
+
+
+def _run_reminders_script(script: str, args: tuple[str, ...] = ()) -> str:
+    try:
+        raw = run_applescript(script, *args)
+    except RuntimeError as e:
+        if _is_permission_error_message(str(e)):
+            raise RuntimeError(_PERMISSION_DENIED_MESSAGE) from e
+        raise
+    if raw == _PERMISSION_DENIED_SENTINEL:
+        raise RuntimeError(_PERMISSION_DENIED_MESSAGE)
+    return raw
 
 
 def _nn(value):
@@ -31,31 +60,58 @@ def _normalize_due_iso(due: str) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
-_LISTS_SCRIPT = r"""
+_PERMISSION_HELPERS = r"""
+on permission_denied_marker()
+    return "__APPLE_ECOSYSTEM_MCP_REMINDERS_PERMISSION_DENIED__"
+end permission_denied_marker
+
+on is_permission_error(errMsg, errNum)
+    if errNum is -1743 then return true
+    set msg to errMsg as string
+    if msg contains "not authorized" then return true
+    if msg contains "not authorised" then return true
+    if msg contains "not allowed to send Apple events" then return true
+    if msg contains "Not authorized" then return true
+    if msg contains "Not authorised" then return true
+    return false
+end is_permission_error
+"""
+
+
+_LISTS_SCRIPT = _PERMISSION_HELPERS + r"""
 on run argv
-    tell application "Reminders"
-        set out to {}
-        repeat with l in lists
-            set end of out to name of l
-        end repeat
-    end tell
-    return my jarr(out)
+    try
+        tell application "Reminders"
+            set out to {}
+            repeat with l in lists
+                set lid to ""
+                try
+                    set lid to id of l
+                end try
+                set end of out to {lid, name of l}
+            end repeat
+        end tell
+        return my jsonify(out)
+    on error errMsg number errNum
+        if my is_permission_error(errMsg, errNum) then return my permission_denied_marker()
+        error errMsg number errNum
+    end try
 end run
 
-on jarr(xs)
+on jsonify(rows)
     set s to "["
     set first_item to true
-    repeat with x in xs
+    repeat with r in rows
         if first_item then
             set first_item to false
         else
             set s to s & ","
         end if
-        set s to s & my jstr(x)
+        set s to s & "{\"id\":" & my jstr(item 1 of r) & ",\"name\":" & my jstr(item 2 of r) & "}"
     end repeat
     set s to s & "]"
     return s
-end jarr
+end jsonify
 
 on jstr(v)
     try
@@ -79,54 +135,85 @@ end replace
 """
 
 
-_LIST_SCRIPT = r"""
+_LIST_SCRIPT = _PERMISSION_HELPERS + r"""
 on run argv
-    set list_name to item 1 of argv
-    set completed_flag to item 2 of argv
+    set list_id to item 1 of argv
+    set list_name to item 2 of argv
+    set completed_flag to item 3 of argv
     set want_completed to (completed_flag is "true")
     set rows to {}
-    tell application "Reminders"
-        if list_name is "" then
-            set target_reminders to reminders
-        else
-            set target_list to missing value
-            repeat with l in lists
-                if (name of l as string) is list_name then
-                    set target_list to l
-                    exit repeat
+    try
+        tell application "Reminders"
+            if list_id is "" and list_name is "" then
+                set target_reminders to reminders
+            else
+                set target_list to missing value
+                repeat with l in lists
+                    set current_id to ""
+                    try
+                        set current_id to id of l
+                    end try
+                    if list_id is not "" then
+                        if (current_id as string) is list_id then
+                            set target_list to l
+                            exit repeat
+                        end if
+                    else if (name of l as string) is list_name then
+                        set target_list to l
+                        exit repeat
+                    end if
+                end repeat
+                if target_list is missing value then
+                    return "[]"
+                end if
+                set target_reminders to reminders of target_list
+            end if
+            repeat with r in target_reminders
+                set is_done to completed of r
+                if (want_completed and is_done) or ((not want_completed) and (not is_done)) then
+                    set rid to id of r
+                    set rtitle to name of r
+                    set rnotes to ""
+                    try
+                        set rnotes to body of r
+                    end try
+                    set rdue to ""
+                    try
+                        set rdue to (due date of r) as «class isot» as string
+                    end try
+                    set rprio to 0
+                    try
+                        set rprio to priority of r
+                    end try
+                    set rlist to ""
+                    set rlist_id to ""
+                    try
+                        set rlist to name of container of r
+                        set rlist_id to id of container of r
+                    end try
+                    set rrecur to ""
+                    try
+                        set rrecur to recurrence of r
+                    end try
+                    set rtags to {}
+                    try
+                        repeat with t in tags of r
+                            try
+                                set end of rtags to name of t
+                            on error
+                                set end of rtags to t as string
+                            end try
+                        end repeat
+                    end try
+                    set end of rows to {rid, rtitle, rnotes, rdue, rprio, rlist, rlist_id, is_done, rrecur, rtags}
                 end if
             end repeat
-            if target_list is missing value then
-                return "[]"
-            end if
-            set target_reminders to reminders of target_list
-        end if
-        repeat with r in target_reminders
-            set is_done to completed of r
-            if (want_completed and is_done) or ((not want_completed) and (not is_done)) then
-                set rid to id of r
-                set rtitle to name of r
-                set rnotes to ""
-                try
-                    set rnotes to body of r
-                end try
-                set rdue to ""
-                try
-                    set rdue to (due date of r) as «class isot» as string
-                end try
-                set rprio to 0
-                try
-                    set rprio to priority of r
-                end try
-                set rlist to ""
-                try
-                    set rlist to name of container of r
-                end try
-                set end of rows to {rid, rtitle, rnotes, rdue, rprio, rlist, is_done}
-            end if
-        end repeat
-    end tell
-    return my jsonify(rows)
+        end tell
+        return my jsonify(rows)
+    on error errMsg number errNum
+        if my is_permission_error(errMsg, errNum) then return my permission_denied_marker()
+        error errMsg number errNum
+    end try
 end run
 
 on jsonify(rows)
@@ -139,7 +226,7 @@ on jsonify(rows)
             set out to out & ","
         end if
         set done_str to "false"
-        if (item 7 of r) then set done_str to "true"
+        if (item 8 of r) then set done_str to "true"
         set prio_str to (item 5 of r) as string
         set out to out & "{" & ¬
             "\"id\":" & my jstr(item 1 of r) & "," & ¬
@@ -148,11 +235,29 @@ on jsonify(rows)
             "\"due\":" & my jstr(item 4 of r) & "," & ¬
             "\"priority\":" & prio_str & "," & ¬
             "\"list_name\":" & my jstr(item 6 of r) & "," & ¬
+            "\"list_id\":" & my jstr(item 7 of r) & "," & ¬
+            "\"recurrence\":" & my jstr(item 9 of r) & "," & ¬
+            "\"tags\":" & my jarr(item 10 of r) & "," & ¬
             "\"completed\":" & done_str & "}"
     end repeat
     set out to out & "]"
     return out
 end jsonify
+
+on jarr(xs)
+    set s to "["
+    set first_item to true
+    repeat with x in xs
+        if first_item then
+            set first_item to false
+        else
+            set s to s & ","
+        end if
+        set s to s & my jstr(x)
+    end repeat
+    set s to s & "]"
+    return s
+end jarr
 
 on jstr(v)
     try
@@ -179,38 +284,53 @@ end replace
 """
 
 
-_CREATE_SCRIPT = r"""
+_CREATE_SCRIPT = _PERMISSION_HELPERS + r"""
 on run argv
     set r_title to item 1 of argv
-    set r_list to item 2 of argv
-    set r_due to item 3 of argv
-    set r_notes to item 4 of argv
-    set r_prio to (item 5 of argv) as integer
-    tell application "Reminders"
-        set target_list to missing value
-        if r_list is "" then
-            if (count of lists) = 0 then error "No reminder lists available" number 404
-            set target_list to item 1 of lists
-        else
-            repeat with l in lists
-                if (name of l as string) is r_list then
-                    set target_list to l
-                    exit repeat
-                end if
-            end repeat
-        end if
-        if target_list is missing value then error "List not found" number 404
+    set r_list_id to item 2 of argv
+    set r_list to item 3 of argv
+    set r_due to item 4 of argv
+    set r_notes to item 5 of argv
+    set r_prio to (item 6 of argv) as integer
+    try
+        tell application "Reminders"
+            set target_list to missing value
+            if r_list_id is "" and r_list is "" then
+                if (count of lists) = 0 then error "No reminder lists available" number 404
+                set target_list to item 1 of lists
+            else
+                repeat with l in lists
+                    set current_id to ""
+                    try
+                        set current_id to id of l
+                    end try
+                    if r_list_id is not "" then
+                        if (current_id as string) is r_list_id then
+                            set target_list to l
+                            exit repeat
+                        end if
+                    else if (name of l as string) is r_list then
+                        set target_list to l
+                        exit repeat
+                    end if
+                end repeat
+            end if
+            if target_list is missing value then error "List not found" number 404
 
-        set props to {name:r_title}
-        if r_notes is not "" then set body of props to r_notes
-        if r_prio is not 0 then set priority of props to r_prio
-        set new_r to make new reminder at end of reminders of target_list with properties props
-        if r_due is not "" then
-            set due date of new_r to my parse_iso(r_due)
-        end if
-        set rid to id of new_r
-    end tell
-    return rid
+            set props to {name:r_title}
+            if r_notes is not "" then set body of props to r_notes
+            if r_prio is not 0 then set priority of props to r_prio
+            set new_r to make new reminder at end of reminders of target_list with properties props
+            if r_due is not "" then
+                set due date of new_r to my parse_iso(r_due)
+            end if
+            set rid to id of new_r
+        end tell
+        return rid
+    on error errMsg number errNum
+        if my is_permission_error(errMsg, errNum) then return my permission_denied_marker()
+        error errMsg number errNum
+    end try
 end run
 
 on parse_iso(s)
@@ -235,48 +355,84 @@ end parse_iso
 """
 
 
-_COMPLETE_SCRIPT = r"""
+_COMPLETE_SCRIPT = _PERMISSION_HELPERS + r"""
 on run argv
     set rid to item 1 of argv
-    tell application "Reminders"
-        set r to first reminder whose id is rid
-        set completed of r to true
-    end tell
-    return rid
+    try
+        tell application "Reminders"
+            set r to first reminder whose id is rid
+            set completed of r to true
+        end tell
+        return rid
+    on error errMsg number errNum
+        if my is_permission_error(errMsg, errNum) then return my permission_denied_marker()
+        error errMsg number errNum
+    end try
 end run
 """
 
 
-_DELETE_SCRIPT = r"""
+_DELETE_SCRIPT = _PERMISSION_HELPERS + r"""
 on run argv
     set rid to item 1 of argv
-    tell application "Reminders"
-        set r to first reminder whose id is rid
-        delete r
-    end tell
-    return rid
+    try
+        tell application "Reminders"
+            set r to first reminder whose id is rid
+            delete r
+        end tell
+        return rid
+    on error errMsg number errNum
+        if my is_permission_error(errMsg, errNum) then return my permission_denied_marker()
+        error errMsg number errNum
+    end try
 end run
 """
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Reminder Lists", readOnlyHint=True))
-def reminders_lists() -> list[str]:
-    """List all reminder lists."""
-    raw = run_applescript(_LISTS_SCRIPT)
+def reminders_lists(include_metadata: bool = False) -> list[Any]:
+    """List reminder lists.
+
+    By default this preserves the original list-of-names response. Set
+    include_metadata=True to get stable list identifiers for targeting.
+    """
+    raw = _run_reminders_script(_LISTS_SCRIPT)
     try:
         parsed = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
         raise RuntimeError("Failed to parse Reminders lists response") from e
-    return [str(n) for n in parsed if _nn(n)]
+
+    lists: list[dict] = []
+    for row in parsed:
+        if isinstance(row, dict):
+            name = _nn(row.get("name"))
+            if not name:
+                continue
+            lists.append({"id": _nn(row.get("id")), "name": str(name)})
+        else:
+            name = _nn(row)
+            if name:
+                lists.append({"id": None, "name": str(name)})
+
+    if include_metadata:
+        return lists
+    return [item["name"] for item in lists]
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Reminders", readOnlyHint=True))
-def reminders_list(list_name: str | None = None, completed: bool = False) -> list[dict]:
-    """List reminders, optionally filtered by list or status."""
-    raw = run_applescript(
+def reminders_list(
+    list_name: str | None = None,
+    completed: bool = False,
+    reminders_list_id: str | None = None,
+) -> list[dict]:
+    """List reminders, optionally filtered by stable list id, list name, or status."""
+    raw = _run_reminders_script(
         _LIST_SCRIPT,
-        list_name or "",
-        "true" if completed else "false",
+        (
+            reminders_list_id or "",
+            list_name or "",
+            "true" if completed else "false",
+        ),
     )
     try:
         parsed = json.loads(raw) if raw else []
@@ -293,6 +449,9 @@ def reminders_list(list_name: str | None = None, completed: bool = False) -> lis
                 "due": _nn(row.get("due")),
                 "priority": int(row.get("priority") or 0),
                 "list_name": _nn(row.get("list_name")),
+                "list_id": _nn(row.get("list_id")),
+                "recurrence": _nn(row.get("recurrence")),
+                "tags": [str(t) for t in (row.get("tags") or []) if _nn(t)],
                 "completed": bool(row.get("completed")),
             }
         )
@@ -306,9 +465,10 @@ def reminders_create(
     due: str | None = None,
     notes: str | None = None,
     priority: int = 0,
+    reminders_list_id: str | None = None,
 ) -> dict:
     """Create a reminder."""
-    if list_name:
+    if list_name and not reminders_list_id:
         try:
             known = reminders_lists()
         except RuntimeError:
@@ -322,13 +482,16 @@ def reminders_create(
     if due:
         due_str = _normalize_due_iso(due)
     priority = max(0, min(int(priority), 9))
-    rid = run_applescript(
+    rid = _run_reminders_script(
         _CREATE_SCRIPT,
-        title,
-        list_name or "",
-        due_str,
-        notes or "",
-        str(priority),
+        (
+            title,
+            reminders_list_id or "",
+            list_name or "",
+            due_str,
+            notes or "",
+            str(priority),
+        ),
     )
     return {"id": rid, "success": True}
 
@@ -336,12 +499,12 @@ def reminders_create(
 @mcp.tool(annotations=ToolAnnotations(title="Complete Reminder", destructiveHint=True))
 def reminders_complete(reminder_id: str) -> dict:
     """Mark a reminder as complete."""
-    rid = run_applescript(_COMPLETE_SCRIPT, reminder_id)
+    rid = _run_reminders_script(_COMPLETE_SCRIPT, (reminder_id,))
     return {"id": rid or reminder_id, "success": True}
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Reminder", destructiveHint=True))
 def reminders_delete(reminder_id: str) -> dict:
     """Delete a reminder."""
-    rid = run_applescript(_DELETE_SCRIPT, reminder_id)
+    rid = _run_reminders_script(_DELETE_SCRIPT, (reminder_id,))
     return {"id": rid or reminder_id, "success": True}
