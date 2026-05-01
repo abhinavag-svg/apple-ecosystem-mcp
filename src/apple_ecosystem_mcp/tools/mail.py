@@ -103,7 +103,7 @@ on buildMailboxPath(mb)
                     exit repeat
                 end if
                 try
-                    if (count of mailboxes of containerMb) > 0 then
+                    if class of containerMb is account then
                         exit repeat
                     end if
                 end try
@@ -187,18 +187,20 @@ on run argv
         set mbIdsIdx to mbIdsIdx + 1
     end repeat
 
-    set searchSenderStr to item mbIdsIdx of argv
+    set searchSubjectStr to item mbIdsIdx of argv
+    set searchSubject to searchSubjectStr is "1"
+    set searchSenderStr to item (mbIdsIdx + 1) of argv
     set searchSender to searchSenderStr is "1"
-    set toAddr to item (mbIdsIdx + 1) of argv
-    set ccAddr to item (mbIdsIdx + 2) of argv
+    set toAddr to item (mbIdsIdx + 2) of argv
+    set ccAddr to item (mbIdsIdx + 3) of argv
 
     -- Check if any filters are active
     set hasFilters to false
-    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" or toAddr is not "" or ccAddr is not "" then
+    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" or toAddr is not "" or ccAddr is not "" or acctNameFilter is not "" or mbIdsCount > 0 then
         set hasFilters to true
     end if
 
-    if qry is "" then
+    if qry is "" and not hasFilters then
         return "[]"
     end if
 
@@ -278,32 +280,31 @@ on run argv
                                 try
                                     set subj to subject of msg as string
                                 end try
-                                if subj is "" then
-                                    -- Skip messages with no subject.
-                                else
-                                    set snd to ""
-                                    if searchSender then
-                                        try
-                                            set snd to sender of msg as string
-                                        end try
-                                    end if
+                                set snd to ""
+                                if searchSender then
+                                    try
+                                        set snd to sender of msg as string
+                                    end try
+                                end if
 
-                                    set queryMatch to false
-                                    if my containsCI(subj, qry) then
+                                set queryMatch to false
+                                if qry is "" then
+                                    set queryMatch to true
+                                else if searchSubject and my containsCI(subj, qry) then
+                                    set queryMatch to true
+                                else if searchSender and my containsCI(snd, qry) then
+                                    set queryMatch to true
+                                else if searchBody then
+                                    set bodyText to ""
+                                    try
+                                        set bodyText to content of msg
+                                    end try
+                                    if my containsCI(bodyText, qry) then
                                         set queryMatch to true
-                                    else if searchSender and my containsCI(snd, qry) then
-                                        set queryMatch to true
-                                    else if searchBody then
-                                        set bodyText to ""
-                                        try
-                                            set bodyText to content of msg
-                                        end try
-                                        if my containsCI(bodyText, qry) then
-                                            set queryMatch to true
-                                        end if
                                     end if
+                                end if
 
-                                    if queryMatch then
+                                if queryMatch then
                                         set msgDate to ""
                                         try
                                             set msgDate to (date received of msg) as «class isot» as string
@@ -414,7 +415,6 @@ on run argv
                                                 set count_ to count_ + 1
                                             end if
                                         end if
-                                    end if
                                 end if
                             end if
                         end repeat
@@ -515,6 +515,7 @@ def mail_search(
     args.append(str(len(mailbox_ids)))
     args.extend(mailbox_ids)
 
+    args.append("1" if "subject" in search_fields else "0")
     args.append("1" if "sender" in search_fields else "0")
     args.append(filters.get("to_addr") or "")
     args.append(filters.get("cc_addr") or "")
@@ -877,7 +878,9 @@ on run argv
                     set mbIdStr to id of mb as text
                 end try
                 if mbIdStr is "" then
-                    set mbIdStr to mbName
+                    try
+                        set mbIdStr to name of mb as string
+                    end try
                 end if
                 if mbIdStr is targetMbId then
                     set dst to mb

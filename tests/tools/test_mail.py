@@ -106,8 +106,8 @@ def test_mail_search_default_and_argv(monkeypatch):
     result = mail.mail_search("invoice")
     assert len(result) == 3
     args = run_mock.call_args.args
-    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_sender, to_addr, cc_addr
-    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "0", "", "")
+    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_subject, search_sender, to_addr, cc_addr
+    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "1", "0", "", "")
 
 
 def test_mail_search_forwards_mailbox_id_and_since(monkeypatch):
@@ -115,8 +115,8 @@ def test_mail_search_forwards_mailbox_id_and_since(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     mail.mail_search("q", mailbox_id="mb-7", since="2026-04-01T00:00:00", limit=10)
     args = run_mock.call_args.args
-    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_sender, to_addr, cc_addr
-    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "0", "", "")
+    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_subject, search_sender, to_addr, cc_addr
+    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "1", "0", "", "")
 
 
 def test_mail_search_caps_at_100(monkeypatch):
@@ -226,7 +226,7 @@ def test_mail_search_with_to_filter(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     mail.mail_search("q", filters={"to_addr": "recipient@example.com"})
     args = run_mock.call_args.args
-    assert args[14] == "recipient@example.com"
+    assert args[15] == "recipient@example.com"
 
 
 def test_mail_search_with_cc_filter(monkeypatch):
@@ -234,7 +234,7 @@ def test_mail_search_with_cc_filter(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     mail.mail_search("q", filters={"cc_addr": "cc@example.com"})
     args = run_mock.call_args.args
-    assert args[15] == "cc@example.com"
+    assert args[16] == "cc@example.com"
 
 
 def test_mail_search_with_unread_filter(monkeypatch):
@@ -325,9 +325,10 @@ def test_mail_search_no_filters_backward_compat(monkeypatch):
     assert args[8] == ""  # has_attachments
     assert args[9] == ""  # account_name
     assert args[12] == "0"  # mailbox_ids_count
-    assert args[13] == "0"  # search_sender
-    assert args[14] == ""  # to_addr
-    assert args[15] == ""  # cc_addr
+    assert args[13] == "1"  # search_subject
+    assert args[14] == "0"  # search_sender
+    assert args[15] == ""  # to_addr
+    assert args[16] == ""  # cc_addr
 
 
 # ---------------------------------------------------------------------------
@@ -359,6 +360,7 @@ def test_mail_search_with_body_field_only(monkeypatch):
     mail.mail_search("q", search_fields=["body"])
     args = run_mock.call_args.args
     assert args[10] == "1"
+    assert args[13] == "0"
 
 
 def test_mail_search_with_sender_field(monkeypatch):
@@ -367,7 +369,8 @@ def test_mail_search_with_sender_field(monkeypatch):
     mail.mail_search("q", search_fields=["sender"])
     args = run_mock.call_args.args
     assert args[10] == "0"
-    assert args[13] == "1"
+    assert args[13] == "0"
+    assert args[14] == "1"
 
 
 def test_mail_search_with_sender_and_body_fields(monkeypatch):
@@ -376,7 +379,8 @@ def test_mail_search_with_sender_and_body_fields(monkeypatch):
     mail.mail_search("q", search_fields=["sender", "body"])
     args = run_mock.call_args.args
     assert args[10] == "1"
-    assert args[13] == "1"
+    assert args[13] == "0"
+    assert args[14] == "1"
 
 
 def test_mail_search_subject_field_only(monkeypatch):
@@ -385,6 +389,21 @@ def test_mail_search_subject_field_only(monkeypatch):
     mail.mail_search("q", search_fields=["subject"])
     args = run_mock.call_args.args
     assert args[10] == "0"
+    assert args[13] == "1"
+
+
+def test_mail_search_script_allows_empty_query_with_filters():
+    assert 'if qry is "" and not hasFilters then' in mail._SEARCH_SCRIPT
+    assert 'if qry is "" then\n                                    set queryMatch to true' in mail._SEARCH_SCRIPT
+
+
+def test_mail_search_script_honors_subject_field_flag():
+    assert "set searchSubject to searchSubjectStr is \"1\"" in mail._SEARCH_SCRIPT
+    assert "else if searchSubject and my containsCI(subj, qry) then" in mail._SEARCH_SCRIPT
+
+
+def test_mail_search_script_does_not_skip_subjectless_messages():
+    assert "Skip messages with no subject" not in mail._SEARCH_SCRIPT
 
 
 # ---------------------------------------------------------------------------
@@ -442,6 +461,11 @@ def test_mail_list_mailboxes_nested_path(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_list_mailboxes()
     assert result[0]["path"] == "Archive/2024"
+
+
+def test_mail_list_mailboxes_path_walks_until_account_container():
+    assert "if class of containerMb is account then" in mail._LIST_MAILBOXES_SCRIPT
+    assert "count of mailboxes of containerMb" not in mail._LIST_MAILBOXES_SCRIPT
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +740,11 @@ def test_mail_move_message_targets_by_id(monkeypatch):
     assert result["mailbox_id"] == "mb-archive"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>", "mb-archive")
+
+
+def test_mail_move_script_name_fallback_defines_mailbox_name():
+    assert "set mbIdStr to mbName" not in mail._MOVE_SCRIPT
+    assert "set mbIdStr to name of mb as string" in mail._MOVE_SCRIPT
 
 
 # ---------------------------------------------------------------------------
