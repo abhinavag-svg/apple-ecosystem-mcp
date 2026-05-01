@@ -11,10 +11,10 @@ Legend:
 
 - [x] **MAIL-001 (P0)** `mail_search` canonical IDs: always return RFC `message_id` and use it consistently in `mail_get_thread`/move/flag/delete.
 - [x] **MAIL-002 (P1)** `mail_search` advanced filters: `from`, `to`, `cc`, `unread`, `flagged`, `has_attachments`, `account_name`, `mailbox_ids[]`.
-- [x] **MAIL-003 (P1)** `mail_search` body search (opt-in): `search_fields=["subject","sender","body"]` with explicit perf caps and clear truncation indicator.
-- [ ] **MAIL-004 (P1)** Smart Mailboxes + mailbox hierarchy: include mailbox path/type so users can target “Inbox” vs rules-based mailboxes reliably.
-- [ ] **MAIL-005 (P2)** Attachments metadata in search results: `{name,size_bytes,mime_type}` (capped) and `has_attachments` boolean.
-- [ ] **MAIL-006 (P2)** Date filtering: accept `since`/`before` ISO inputs and filter via proper date comparisons (not lexicographic strings).
+- [x] **MAIL-003 (P1)** `mail_search` body search (opt-in): `search_fields=[“subject”,”sender”,”body”]` with explicit perf caps and clear truncation indicator.
+- [x] **MAIL-004 (P1)** Smart Mailboxes + mailbox hierarchy: include mailbox path/type so users can target “Inbox” vs rules-based mailboxes reliably.
+- [x] **MAIL-005 (P2)** Attachments metadata in search results: `{name,size_bytes,mime_type}` (capped) and `has_attachments` boolean.
+- [x] **MAIL-006 (P2)** Date filtering: accept `since`/`before` ISO inputs and filter via proper date comparisons (not lexicographic strings).
 
 ## Calendar
 
