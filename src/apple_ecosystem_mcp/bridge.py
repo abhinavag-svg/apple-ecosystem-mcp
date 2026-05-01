@@ -78,6 +78,7 @@ def run_applescript(script: str, *args: str) -> str:
                 capture_output=True,
                 text=True,
                 timeout=60,
+                stdin=subprocess.DEVNULL,
                 check=False,
             )
         except subprocess.TimeoutExpired as e:

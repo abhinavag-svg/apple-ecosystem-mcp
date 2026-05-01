@@ -34,25 +34,39 @@ on _js(s)
         set c to id of ch
         if c is 34 then
             set out to out & "\\\""
-        else if c is 92 then
-            set out to out & "\\\\"
-        else if c is 8 then
-            set out to out & "\\b"
-        else if c is 9 then
-            set out to out & "\\t"
-        else if c is 10 then
-            set out to out & "\\n"
-        else if c is 12 then
-            set out to out & "\\f"
-        else if c is 13 then
-            set out to out & "\\r"
-        else if c < 32 then
-            set hexch to "0123456789abcdef"
-            set hi to (c div 16) + 1
-            set lo to (c mod 16) + 1
-            set out to out & "\\u00" & character hi of hexch & character lo of hexch
         else
-            set out to out & ch
+            if c is 92 then
+                set out to out & "\\\\"
+            else
+                if c is 8 then
+                    set out to out & "\\b"
+                else
+                    if c is 9 then
+                        set out to out & "\\t"
+                    else
+                        if c is 10 then
+                            set out to out & "\\n"
+                        else
+                            if c is 12 then
+                                set out to out & "\\f"
+                            else
+                                if c is 13 then
+                                    set out to out & "\\r"
+                                else
+                                    if c < 32 then
+                                        set hexch to "0123456789abcdef"
+                                        set hi to (c div 16) + 1
+                                        set lo to (c mod 16) + 1
+                                        set out to out & "\\u00" & character hi of hexch & character lo of hexch
+                                    else
+                                        set out to out & ch
+                                    end if
+                                end if
+                            end if
+                        end if
+                    end if
+                end if
+            end if
         end if
     end repeat
     return "\"" & out & "\""
@@ -73,15 +87,18 @@ end _iso
 """
 
 
-_LIST_CALENDARS_SCRIPT = _JSON_HELPERS + r"""
+_LIST_CALENDARS_SCRIPT = r"""
 on run argv
+    set out to "["
+    set firstItem to true
     tell application "Calendar"
-        set items_ to {}
         repeat with c in calendars
+            if not firstItem then set out to out & ","
+            set firstItem to false
             set n to name of c
             set u to uid of c
             try
-                set acct to (name of (account of c))
+                set acct to name of (account of c)
             on error
                 set acct to missing value
             end try
@@ -90,15 +107,32 @@ on run argv
             on error
                 set w to true
             end try
-            set row to "{\"name\":" & my _js(n) & ",\"uid\":" & my _js(u) & ",\"account_name\":" & my _js(acct) & ",\"writable\":" & my _bool(w) & "}"
-            set end of items_ to row
+            set wStr to "false"
+            if w then set wStr to "true"
+            set out to out & "{\"name\":" & my jsonString(n) & ",\"uid\":" & my jsonString(u) & ",\"account_name\":" & my jsonString(acct) & ",\"writable\":" & wStr & "}"
         end repeat
     end tell
-    set AppleScript's text item delimiters to ","
-    set out to "[" & (items_ as string) & "]"
-    set AppleScript's text item delimiters to ""
+    set out to out & "]"
     return out
 end run
+
+on jsonString(v)
+    if v is missing value then return "null"
+    set s to v as string
+    if s = "" then return "\"\""
+    set s to my replace(s, "\\", "\\\\")
+    set s to my replace(s, "\"", "\\\"")
+    return "\"" & s & "\""
+end jsonString
+
+on replace(s, f, r)
+    set AppleScript's text item delimiters to f
+    set parts to text items of s
+    set AppleScript's text item delimiters to r
+    set out to parts as string
+    set AppleScript's text item delimiters to ""
+    return out
+end replace
 """
 
 
@@ -328,13 +362,17 @@ on run argv
         if endISO is not "" then set end date of found to my _parseISO(endISO)
         if clearLocationFlag is "true" then
             set location of found to ""
-        else if loc is not "" then
-            set location of found to loc
+        else
+            if loc is not "" then
+                set location of found to loc
+            end if
         end if
         if clearNotesFlag is "true" then
             set description of found to ""
-        else if notesText is not "" then
-            set description of found to notesText
+        else
+            if notesText is not "" then
+                set description of found to notesText
+            end if
         end if
         if inviteesCSV is not "" then
             set AppleScript's text item delimiters to ","

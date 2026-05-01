@@ -278,9 +278,9 @@ on jstr(v)
     if s = "" then return "\"\""
     set s to my replace(s, "\\", "\\\\")
     set s to my replace(s, "\"", "\\\"")
-    set s to my replace(s, return, "\\n")
-    set s to my replace(s, linefeed, "\\n")
-    set s to my replace(s, tab, "\\t")
+    set s to my replace(s, character 13, "\\n")
+    set s to my replace(s, character 10, "\\n")
+    set s to my replace(s, character 9, "\\t")
     return "\"" & s & "\""
 end jstr
 
@@ -441,9 +441,9 @@ on jstr(v)
     if s = "" then return "\"\""
     set s to my replace(s, "\\", "\\\\")
     set s to my replace(s, "\"", "\\\"")
-    set s to my replace(s, return, "\\n")
-    set s to my replace(s, linefeed, "\\n")
-    set s to my replace(s, tab, "\\t")
+    set s to my replace(s, character 13, "\\n")
+    set s to my replace(s, character 10, "\\n")
+    set s to my replace(s, character 9, "\\t")
     return "\"" & s & "\""
 end jstr
 

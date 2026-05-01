@@ -158,9 +158,11 @@ on run argv
                             set target_list to l
                             exit repeat
                         end if
-                    else if (name of l as string) is list_name then
-                        set target_list to l
-                        exit repeat
+                    else
+                        if (name of l as string) is list_name then
+                            set target_list to l
+                            exit repeat
+                        end if
                     end if
                 end repeat
                 if target_list is missing value then
@@ -267,9 +269,9 @@ on jstr(v)
     if s = "" then return "\"\""
     set s to my replace(s, "\\", "\\\\")
     set s to my replace(s, "\"", "\\\"")
-    set s to my replace(s, return, "\\n")
-    set s to my replace(s, linefeed, "\\n")
-    set s to my replace(s, tab, "\\t")
+    set s to my replace(s, character 13, "\\n")
+    set s to my replace(s, character 10, "\\n")
+    set s to my replace(s, character 9, "\\t")
     return "\"" & s & "\""
 end jstr
 
@@ -309,9 +311,11 @@ on run argv
                             set target_list to l
                             exit repeat
                         end if
-                    else if (name of l as string) is r_list then
-                        set target_list to l
-                        exit repeat
+                    else
+                        if (name of l as string) is r_list then
+                            set target_list to l
+                            exit repeat
+                        end if
                     end if
                 end repeat
             end if
