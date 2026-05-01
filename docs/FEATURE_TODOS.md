@@ -37,9 +37,9 @@ Legend:
 
 ## iCloud Drive
 
-- [ ] **ICLD-001 (P1)** Deterministic filename search: implement bounded `os.walk` filename search (with caps) to avoid Spotlight false negatives.
-- [ ] **ICLD-002 (P1)** Binary-safe read/write: support base64 for non-UTF8 files (`encoding="base64"` option).
-- [ ] **ICLD-003 (P2)** `icloud_stat` + `icloud_mkdir`: explicit metadata/mkdir helpers to reduce caller guesswork.
+- [x] **ICLD-001 (P1)** Deterministic filename search: implement bounded `os.walk` filename search (with caps) to avoid Spotlight false negatives.
+- [x] **ICLD-002 (P1)** Binary-safe read/write: support base64 for non-UTF8 files (`encoding="base64"` option).
+- [x] **ICLD-003 (P2)** `icloud_stat` + `icloud_mkdir`: explicit metadata/mkdir helpers to reduce caller guesswork.
 
 ## Packaging / DX / Ops
 
