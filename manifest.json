@@ -15,8 +15,8 @@
     "type": "python",
     "entry_point": "server/runner.py",
     "mcp_config": {
-      "command": "uvx",
-      "args": ["--refresh-package", "apple-ecosystem-mcp"]
+      "command": "uv",
+      "args": ["run", "--directory", "/Users/abhinav/projects/git/apple-ecosystem-mcp", "python", "-m", "apple_ecosystem_mcp"]
     }
   },
   "compatibility": {
