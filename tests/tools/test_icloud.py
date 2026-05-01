@@ -1,8 +1,4 @@
-import json
-import os
-import shutil
-import subprocess
-from pathlib import Path
+import base64
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,9 +8,11 @@ from apple_ecosystem_mcp.tools.icloud import (
     _safe,
     icloud_delete,
     icloud_list,
+    icloud_mkdir,
     icloud_move,
     icloud_read,
     icloud_search,
+    icloud_stat,
     icloud_write,
 )
 from apple_ecosystem_mcp.permissions import ICLOUD_ROOT
@@ -184,6 +182,17 @@ class TestIcloudRead:
             with pytest.raises(RuntimeError, match="not a file"):
                 icloud_read("/subdir")
 
+    def test_icloud_read_base64_binary_file(self, tmp_path):
+        """Reading with encoding=base64 returns binary-safe content."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            raw = b"\x00\xffbinary\x80"
+            (tmp_path / "data.bin").write_bytes(raw)
+
+            result = icloud_read("/data.bin", encoding="base64")
+
+            assert result["content"] == base64.b64encode(raw).decode("ascii")
+            assert result["encoding"] == "base64"
+
 
 class TestIcloudWrite:
     """Test icloud_write tool."""
@@ -221,6 +230,87 @@ class TestIcloudWrite:
             icloud_write("/test.txt", "new")
 
             assert (tmp_path / "test.txt").read_text() == "new"
+
+    def test_icloud_write_base64_binary_file(self, tmp_path):
+        """Writing with encoding=base64 decodes binary content."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            raw = b"\x00\xffbinary\x80"
+            encoded = base64.b64encode(raw).decode("ascii")
+
+            result = icloud_write("/data.bin", encoded, encoding="base64")
+
+            assert result["success"] is True
+            assert (tmp_path / "data.bin").read_bytes() == raw
+
+    def test_icloud_write_rejects_invalid_base64(self, tmp_path):
+        """Invalid base64 content raises RuntimeError."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            with pytest.raises(RuntimeError, match="Invalid base64"):
+                icloud_write("/data.bin", "not valid base64", encoding="base64")
+
+
+class TestIcloudStat:
+    """Test icloud_stat tool."""
+
+    def test_icloud_stat_file_metadata(self, tmp_path):
+        """Stat returns file metadata."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            (tmp_path / "file.txt").write_text("content")
+
+            result = icloud_stat("/file.txt")
+
+            assert result["name"] == "file.txt"
+            assert result["path"] == "/file.txt"
+            assert result["size_bytes"] == len(b"content")
+            assert result["is_file"] is True
+            assert result["is_dir"] is False
+            assert "modified" in result
+            assert "created" in result
+
+    def test_icloud_stat_directory_metadata(self, tmp_path):
+        """Stat returns directory metadata."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            (tmp_path / "folder").mkdir()
+
+            result = icloud_stat("/folder")
+
+            assert result["name"] == "folder"
+            assert result["is_dir"] is True
+            assert result["is_file"] is False
+
+    def test_icloud_stat_nonexistent_path(self, tmp_path):
+        """Stat on nonexistent path raises RuntimeError."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            with pytest.raises(RuntimeError, match="does not exist"):
+                icloud_stat("/missing")
+
+
+class TestIcloudMkdir:
+    """Test icloud_mkdir tool."""
+
+    def test_icloud_mkdir_creates_directory(self, tmp_path):
+        """Mkdir creates a directory and returns metadata."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            result = icloud_mkdir("/folder")
+
+            assert result["success"] is True
+            assert result["path"] == "/folder"
+            assert result["is_dir"] is True
+            assert (tmp_path / "folder").is_dir()
+
+    def test_icloud_mkdir_creates_parent_directories(self, tmp_path):
+        """Mkdir creates parent directories by default."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            result = icloud_mkdir("/a/b/c")
+
+            assert result["success"] is True
+            assert (tmp_path / "a" / "b" / "c").is_dir()
+
+    def test_icloud_mkdir_without_parents_fails(self, tmp_path):
+        """Mkdir with parents=False fails if the parent is missing."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            with pytest.raises(RuntimeError, match="Failed to create"):
+                icloud_mkdir("/a/b/c", parents=False)
 
 
 class TestIcloudMove:
@@ -370,3 +460,54 @@ class TestIcloudSearch:
                 result = icloud_search("nonexistent")
 
                 assert result == []
+
+    def test_icloud_search_walk_finds_spotlight_miss(self, tmp_path):
+        """Filename search falls back to deterministic os.walk matching."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            (tmp_path / "b").mkdir()
+            (tmp_path / "a").mkdir()
+            (tmp_path / "b" / "needle.txt").touch()
+            (tmp_path / "a" / "needle.txt").touch()
+
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0, stdout="")
+                result = icloud_search("needle")
+
+            assert [item["path"] for item in result] == [
+                "/a/needle.txt",
+                "/b/needle.txt",
+            ]
+
+    def test_icloud_search_walk_respects_result_cap(self, tmp_path):
+        """Filename search caps local walk results."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            for index in range(3):
+                (tmp_path / f"needle-{index}.txt").touch()
+
+            with (
+                patch("apple_ecosystem_mcp.tools.icloud._ICLOUD_SEARCH_MAX_RESULTS", 2),
+                patch("subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = MagicMock(returncode=0, stdout="")
+                result = icloud_search("needle")
+
+            assert len(result) == 2
+            assert [item["path"] for item in result] == [
+                "/needle-0.txt",
+                "/needle-1.txt",
+            ]
+
+    def test_icloud_search_walk_respects_visit_cap(self, tmp_path):
+        """Filename search stops walking after the visit cap."""
+        with patch("apple_ecosystem_mcp.tools.icloud.ICLOUD_ROOT", tmp_path):
+            (tmp_path / "alpha.txt").touch()
+            (tmp_path / "needle.txt").touch()
+
+            with (
+                patch("apple_ecosystem_mcp.tools.icloud._ICLOUD_SEARCH_MAX_VISITED", 1),
+                patch("subprocess.run") as mock_run,
+            ):
+                mock_run.return_value = MagicMock(returncode=0, stdout="")
+                result = icloud_search("needle")
+
+            assert result == []
