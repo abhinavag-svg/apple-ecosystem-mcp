@@ -210,8 +210,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
-    set month of d to item mo of months
+    set monthList to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of monthList
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d
@@ -326,8 +326,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
-    set month of d to item mo of months
+    set monthList to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of monthList
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d
@@ -418,8 +418,8 @@ on _parseISO(s)
     end if
     set d to current date
     set year of d to yr
-    set months to {January, February, March, April, May, June, July, August, September, October, November, December}
-    set month of d to item mo of months
+    set monthList to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of monthList
     set day of d to dy
     set time of d to hh * 3600 + mm * 60 + ss
     return d

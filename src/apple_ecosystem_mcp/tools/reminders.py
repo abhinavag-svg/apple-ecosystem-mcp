@@ -140,8 +140,10 @@ on run argv
     set list_id to item 1 of argv
     set list_name to item 2 of argv
     set completed_flag to item 3 of argv
+    set lim to (item 4 of argv) as integer
     set want_completed to (completed_flag is "true")
     set rows to {}
+    set count_ to 0
     try
         tell application "Reminders"
             if list_id is "" and list_name is "" then
@@ -171,8 +173,10 @@ on run argv
                 set target_reminders to reminders of target_list
             end if
             repeat with r in target_reminders
+                if count_ ≥ lim then exit repeat
                 set is_done to completed of r
                 if (want_completed and is_done) or ((not want_completed) and (not is_done)) then
+                    set count_ to count_ + 1
                     set rid to id of r
                     set rtitle to name of r
                     set rnotes to ""
@@ -428,11 +432,13 @@ def reminders_list(
     list_name: str | None = None,
     completed: bool = False,
     reminders_list_id: str | None = None,
+    limit: int = 20,
 ) -> list[dict] | dict:
     """List reminders from a specific list. Always requires list_name or reminders_list_id.
 
     If neither is provided, returns the available reminder lists and asks the user
     to pick one — never attempts to enumerate all reminders across all lists.
+    limit: max reminders to return (default 20, max 100).
     """
     if not list_name and not reminders_list_id:
         available = reminders_lists(include_metadata=True)
@@ -441,12 +447,14 @@ def reminders_list(
             "available_lists": available,
             "hint": "Call reminders_list again with list_name=<name> from the list above",
         }
+    capped = max(1, min(int(limit), 100))
     raw = _run_reminders_script(
         _LIST_SCRIPT,
         (
             reminders_list_id or "",
             list_name or "",
             "true" if completed else "false",
+            str(capped),
         ),
     )
     try:
