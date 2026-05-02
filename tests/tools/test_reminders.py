@@ -75,17 +75,20 @@ def test_reminders_list_filters_by_stable_list_id(monkeypatch):
     assert run_mock.call_args.args[3] == "false"
 
 
-def test_reminders_list_default_list_name_is_empty_string(monkeypatch):
-    # list_name=None means "all reminders"; bridge is called with "" arg.
-    run_mock = _patch_run(monkeypatch, "[]")
-    reminders.reminders_list()
-    assert run_mock.call_args.args[1] == ""
-    assert run_mock.call_args.args[2] == ""
+def test_reminders_list_no_filter_returns_available_lists(monkeypatch):
+    # Calling with no list_name/id must not hit the slow all-reminders script;
+    # it should return the available lists and prompt the user to pick one.
+    lists_payload = json.dumps([{"id": "L-1", "name": "Groceries"}, {"id": "L-2", "name": "Work"}])
+    run_mock = _patch_run(monkeypatch, lists_payload)
+    result = reminders.reminders_list()
+    assert isinstance(result, dict)
+    assert result["action_required"] == "Please specify which list to query"
+    assert any(item["name"] == "Groceries" for item in result["available_lists"])
 
 
 def test_reminders_list_filters_by_completed_flag(monkeypatch):
     run_mock = _patch_run(monkeypatch, "[]")
-    reminders.reminders_list(completed=True)
+    reminders.reminders_list(list_name="Work", completed=True)
     assert run_mock.call_args.args[3] == "true"
 
 
@@ -142,7 +145,7 @@ def test_reminders_list_normalizes_missing_values(monkeypatch):
         ]
     )
     _patch_run(monkeypatch, payload)
-    out = reminders.reminders_list()
+    out = reminders.reminders_list(list_name="Reminders")
     assert out[0]["notes"] is None
     assert out[0]["due"] is None
     assert out[0]["list_id"] is None

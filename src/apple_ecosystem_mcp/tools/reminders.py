@@ -428,8 +428,19 @@ def reminders_list(
     list_name: str | None = None,
     completed: bool = False,
     reminders_list_id: str | None = None,
-) -> list[dict]:
-    """List reminders, optionally filtered by stable list id, list name, or status."""
+) -> list[dict] | dict:
+    """List reminders from a specific list. Always requires list_name or reminders_list_id.
+
+    If neither is provided, returns the available reminder lists and asks the user
+    to pick one — never attempts to enumerate all reminders across all lists.
+    """
+    if not list_name and not reminders_list_id:
+        available = reminders_lists(include_metadata=True)
+        return {
+            "action_required": "Please specify which list to query",
+            "available_lists": available,
+            "hint": "Call reminders_list again with list_name=<name> from the list above",
+        }
     raw = _run_reminders_script(
         _LIST_SCRIPT,
         (
