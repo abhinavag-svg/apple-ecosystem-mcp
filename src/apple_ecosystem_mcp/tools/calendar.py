@@ -96,7 +96,7 @@ on run argv
             if not firstItem then set out to out & ","
             set firstItem to false
             set n to name of c
-            set u to uid of c
+            set u to name of c
             try
                 set acct to name of (account of c)
             on error
@@ -147,7 +147,7 @@ on run argv
     tell application "Calendar"
         set items_ to {}
         repeat with c in calendars
-            set cuid to uid of c
+            set cuid to name of c
             if filterUID is "" or filterUID is cuid then
                 try
                     set evs to (every event of c whose start date < endDate and end date > startDate)
@@ -261,7 +261,7 @@ on run argv
                 set AppleScript's text item delimiters to ","
                 set invJoined to invList as string
                 set AppleScript's text item delimiters to ""
-                set out to "{\"uid\":" & my _js(targetUID) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"notes\":" & my _js(n) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(uid of c) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[" & invJoined & "],\"invitees\":[" & invJoined & "]}"
+                set out to "{\"uid\":" & my _js(targetUID) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"notes\":" & my _js(n) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(name of c) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[" & invJoined & "],\"invitees\":[" & invJoined & "]}"
                 return out
             end if
         end repeat
