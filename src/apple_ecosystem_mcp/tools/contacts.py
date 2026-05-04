@@ -75,19 +75,47 @@ on run argv
             set pid to id of p
             if seen_ids does not contain pid then
                 set end of seen_ids to pid
-                if q is "" or my contactMatches(p, q) then
-                    set pfirst to ""
+                -- Extract properties inside tell block where Contacts context is active
+                set pfirst to ""
+                try
+                    set pfirst to first name of p as string
+                end try
+                set plast to ""
+                try
+                    set plast to last name of p as string
+                end try
+                set porg to ""
+                try
+                    set porg to organization of p as string
+                end try
+                -- Inline match check (replaces contactMatches handler which can't access person properties outside tell block)
+                set matchFound to (q is "")
+                if not matchFound then
+                    if my containsCI(pfirst, q) or my containsCI(plast, q) or my containsCI((pfirst & " " & plast), q) or my containsCI(porg, q) then
+                        set matchFound to true
+                    end if
+                end if
+                if not matchFound then
                     try
-                        set pfirst to first name of p as string
+                        repeat with e in emails of p
+                            if my containsCI(value of e, q) then
+                                set matchFound to true
+                                exit repeat
+                            end if
+                        end repeat
                     end try
-                    set plast to ""
+                end if
+                if not matchFound then
                     try
-                        set plast to last name of p as string
+                        repeat with ph in phones of p
+                            if my containsCI(value of ph, q) then
+                                set matchFound to true
+                                exit repeat
+                            end if
+                        end repeat
                     end try
-                    set porg to ""
-                    try
-                        set porg to organization of p as string
-                    end try
+                end if
+                if matchFound then
                     set email_list to my labeledEmails(p)
                     set phone_list to my labeledPhones(p)
                     set group_list to my groupNamesForPerson(p)
