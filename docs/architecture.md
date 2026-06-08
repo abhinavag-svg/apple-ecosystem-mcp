@@ -25,7 +25,7 @@ Mail, Calendar, Contacts, Reminders, iCloud Drive
 - `src/apple_ecosystem_mcp/tools/` contains the app-specific tool modules.
 - `src/apple_ecosystem_mcp/bridge.py` runs AppleScript through `osascript`.
 - `src/apple_ecosystem_mcp/permissions.py` checks common macOS permission gaps at startup.
-- `server/runner.py` is the MCPB bundle entrypoint. It runs the bundled source with `uv run --project`.
+- `server/runner.py` is the MCPB bundle entrypoint. The manifest launches it with `${__dirname}/server/runner.py`, and the runner executes the bundled source with `uv run --project`.
 
 The server runs locally. It does not host an HTTP service or store credentials.
 
