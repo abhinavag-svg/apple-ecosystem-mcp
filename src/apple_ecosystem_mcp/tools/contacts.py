@@ -51,13 +51,6 @@ on run argv
     tell application "Contacts"
         if group_name is "" then
             set search_people to people
-            if q is not "" then
-                try
-                    set search_people to my nativeMatches(q)
-                on error
-                    set search_people to people
-                end try
-            end if
         else
             set search_people to {}
             repeat with g in groups
@@ -127,18 +120,6 @@ on run argv
     end tell
     return my jsonify(output)
 end run
-
-on nativeMatches(q)
-    tell application "Contacts"
-        set matches to {}
-        set matches to matches & (people whose first name contains q)
-        set matches to matches & (people whose last name contains q)
-        set matches to matches & (people whose organization contains q)
-        set matches to matches & (people whose value of emails contains q)
-        set matches to matches & (people whose value of phones contains q)
-        return matches
-    end tell
-end nativeMatches
 
 on contactMatches(p, q)
     set pfirst to ""

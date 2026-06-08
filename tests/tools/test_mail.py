@@ -136,6 +136,16 @@ def test_mail_search_preview_truncated_to_200(monkeypatch):
         assert len(item["preview"]) == 200
 
 
+def test_mail_search_script_does_not_read_body_for_preview():
+    assert "set preview to \"\"" in mail._SEARCH_SCRIPT
+    assert "set preview to text 1 thru 200 of bodyText" not in mail._SEARCH_SCRIPT
+
+
+def test_mail_search_script_uses_tighter_scan_caps():
+    assert "if scanLim > 250 then set scanLim to 250" in mail._SEARCH_SCRIPT
+    assert "if scanLim > 500 then set scanLim to 500" in mail._SEARCH_SCRIPT
+
+
 def test_mail_search_returns_all_required_fields(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=_search_payload(1)))
     [item] = mail.mail_search("q")

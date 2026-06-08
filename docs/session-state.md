@@ -4,7 +4,7 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
 - **Last changed:** 2026-06-08
-- **Current version:** v0.3.2 (GitHub MCPB release)
+- **Current version:** v0.3.3 (GitHub MCPB release)
 - **Next TODO:** Test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
@@ -18,7 +18,8 @@ Updated automatically at end of each session. Tracks progress across days.
   - Simplified future releases to one GitHub-hosted MCPB artifact and removed the separate package publishing path.
   - Replaced stale Node-style Makefile commands with Python/MCPB commands.
   - Fixed MCPB launch args to use `${__dirname}/server/runner.py` so Claude Desktop resolves the bundled runner path.
-  - Verified non-live tests: `220 passed, 8 warnings`.
+  - Analyzed Claude Desktop logs and fixed Contacts search AppleScript compilation plus Mail search timeout/malformed-JSON behavior.
+  - Verified non-live tests: `222 passed, 8 warnings`.
 - **Blockers:** None in unit/non-live coverage. Live macOS AppleScript behavior still needs manual testing against real Calendar, Reminders, and Contacts data.
 - **Next steps:**
   - Push the six local commits currently ahead of `origin/main`.

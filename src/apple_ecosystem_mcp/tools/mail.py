@@ -259,9 +259,9 @@ on run argv
 
                         set scanLim to mCount
                         if hasFilters then
-                            if scanLim > 1000 then set scanLim to 1000
+                            if scanLim > 250 then set scanLim to 250
                         else
-                            if scanLim > 5000 then set scanLim to 5000
+                            if scanLim > 500 then set scanLim to 500
                         end if
 
                         repeat with offset_ from 0 to (scanLim - 1)
@@ -394,15 +394,7 @@ on run argv
                                                     set internalId to id of msg as string
                                                 end try
                                                 if mid is "" then set mid to internalId
-                                                set bodyText to ""
-                                                try
-                                                    set bodyText to content of msg
-                                                end try
-                                                if (length of bodyText) > 200 then
-                                                    set preview to text 1 thru 200 of bodyText
-                                                else
-                                                    set preview to bodyText
-                                                end if
+                                                set preview to ""
                                                 set thisMbId to ""
                                                 try
                                                     set thisMbId to id of mb as string

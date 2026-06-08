@@ -91,10 +91,11 @@ def test_contacts_search_allows_empty_query_with_group(monkeypatch):
     assert run_mock.call_args.args[3] == "Friends"
 
 
-def test_contacts_search_script_prefers_native_predicates_with_fallback():
-    assert "my nativeMatches(q)" in contacts._SEARCH_SCRIPT
-    assert "on error" in contacts._SEARCH_SCRIPT
+def test_contacts_search_script_scans_inside_contacts_tell_block():
+    assert "on nativeMatches" not in contacts._SEARCH_SCRIPT
+    assert "people whose value of emails" not in contacts._SEARCH_SCRIPT
     assert "set search_people to people" in contacts._SEARCH_SCRIPT
+    assert 'tell application "Contacts"' in contacts._SEARCH_SCRIPT
 
 
 def test_contacts_search_missing_value_normalized(monkeypatch):
