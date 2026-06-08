@@ -3,11 +3,24 @@
 Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
-- **Last changed:** 2026-05-01
+- **Last changed:** 2026-06-08
 - **Current version:** v0.3.0 (PyPI + GitHub released)
-- **Next TODO:** Remaining features: `PKG-002`, `PKG-003`, `TST-001`, `TST-002`, `TST-003`
+- **Next TODO:** Push six local runtime-fix commits, then test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-002`, `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
+
+### Session 4 (2026-06-08, post-release runtime hardening)
+- **What changed:**
+  - Fixed Calendar AppleScript runtime issues: date parsing now uses month constants correctly, and calendar name is used as the stable local identifier because `uid of calendar` is unsupported.
+  - Fixed Reminders runtime behavior: permission errors are standardized, no-filter `reminders_list` avoids timeout behavior, and AppleScript JSON escaping uses ASCII character codes for control characters.
+  - Fixed Contacts search fallback by moving match logic inline inside the `tell application "Contacts"` block so person properties are read in the proper AppleScript context.
+  - Updated local manifest runner args for local development.
+  - Verified non-live tests: `220 passed, 8 warnings`.
+- **Blockers:** None in unit/non-live coverage. Live macOS AppleScript behavior still needs manual testing against real Calendar, Reminders, and Contacts data.
+- **Next steps:**
+  - Push the six local commits currently ahead of `origin/main`.
+  - Re-test in the target client/runtime, especially Contacts search, Calendar list/get events, and Reminders list/list-all behavior.
+  - Decide whether the next implementation work should be backlog tests (`TST-001`/`TST-002`/`TST-003`) or packaging diagnostics/cache busting (`PKG-002`/`PKG-003`).
 
 ### Session 3 (2026-05-01, v0.3.0 feature release)
 - **What changed:**
