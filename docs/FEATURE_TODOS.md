@@ -43,8 +43,8 @@ Legend:
 
 ## Packaging / DX / Ops
 
-- [x] **PKG-001 (P0)** DXT bootstrap stability: ensure Claude Desktop runs in read-only CWD; all temp/log writes must use writable dirs.
-- [ ] **PKG-002 (P1)** Cache busting: pin `uvx` invocation to package version in the DXT manifest and document upgrade steps.
+- [x] **PKG-001 (P0)** MCPB bootstrap stability: ensure Claude Desktop runs in read-only CWD; all temp/log writes must use writable dirs.
+- [x] **PKG-002 (P1)** Simplify distribution: ship one GitHub Release MCPB without a separate package publishing step.
 - [ ] **PKG-003 (P2)** Telemetry-free diagnostics: add opt-in debug logging and a “collect diagnostics” tool (no PII).
 
 ## Test Coverage

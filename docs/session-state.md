@@ -4,8 +4,8 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
 - **Last changed:** 2026-06-08
-- **Current version:** v0.3.0 (PyPI + GitHub released)
-- **Next TODO:** Push six local runtime-fix commits, then test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-002`, `PKG-003`, `TST-001`, `TST-002`, `TST-003`
+- **Current version:** v0.3.0 (GitHub release current; release process now simplified for next version)
+- **Next TODO:** Release the post-0.3.0 runtime fixes as a GitHub MCPB, then test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
 
@@ -15,12 +15,14 @@ Updated automatically at end of each session. Tracks progress across days.
   - Fixed Reminders runtime behavior: permission errors are standardized, no-filter `reminders_list` avoids timeout behavior, and AppleScript JSON escaping uses ASCII character codes for control characters.
   - Fixed Contacts search fallback by moving match logic inline inside the `tell application "Contacts"` block so person properties are read in the proper AppleScript context.
   - Updated local manifest runner args for local development.
+  - Simplified future releases to one GitHub-hosted MCPB artifact and removed the separate package publishing path.
+  - Replaced stale Node-style Makefile commands with Python/MCPB commands.
   - Verified non-live tests: `220 passed, 8 warnings`.
 - **Blockers:** None in unit/non-live coverage. Live macOS AppleScript behavior still needs manual testing against real Calendar, Reminders, and Contacts data.
 - **Next steps:**
   - Push the six local commits currently ahead of `origin/main`.
   - Re-test in the target client/runtime, especially Contacts search, Calendar list/get events, and Reminders list/list-all behavior.
-  - Decide whether the next implementation work should be backlog tests (`TST-001`/`TST-002`/`TST-003`) or packaging diagnostics/cache busting (`PKG-002`/`PKG-003`).
+  - Decide whether the next implementation work should be backlog tests (`TST-001`/`TST-002`/`TST-003`) or packaging diagnostics (`PKG-003`).
 
 ### Session 3 (2026-05-01, v0.3.0 feature release)
 - **What changed:**
@@ -34,7 +36,7 @@ Updated automatically at end of each session. Tracks progress across days.
   - Version bump: 0.2.1 → 0.3.0, manifest.json and pyproject.toml aligned.
 - **Blockers:** None; all tests passing.
 - **Next steps:**
-  - Remaining low-priority items: PKG-002/003 (DXT cache busting, diagnostics), TST-001/002/003 (regression/contract tests).
+  - Remaining low-priority items: packaging diagnostics and TST-001/002/003 (regression/contract tests).
 
 ### Session 2 (2026-04-23, post-release)
 - **What changed:**
@@ -43,7 +45,7 @@ Updated automatically at end of each session. Tracks progress across days.
   - Version bump 0.1.3 → 0.1.4: patch release for spec/test alignment and improved documentation.
 - **Blockers:** None blocking v0.1.4 release.
 - **Next steps:**
-  - Pick backlog item: `MAIL-001` (canonical RFC Message-ID), `CAL-001` (event overlap), `TST-001` (regression), or `PKG-001` (DXT stability).
+  - Pick backlog item: `MAIL-001` (canonical RFC Message-ID), `CAL-001` (event overlap), `TST-001` (regression), or `PKG-001` (desktop bundle stability).
 
 ### Session 1 (2026-04-23)
 - **What changed:**
@@ -51,11 +53,11 @@ Updated automatically at end of each session. Tracks progress across days.
   - Fixed Reminders create/list targeting and ISO due-date normalization.
   - Fixed Calendar ISO parsing (month mapping) and record property setting for create/update.
   - Improved Mail search scanning; added `internal_id` and prefer RFC `message id` where available.
-  - Made bridge logging resilient in read-only CWD environments (Claude Desktop / DXT).
+  - Made bridge logging resilient in read-only CWD environments (Claude Desktop / MCPB).
   - Added a trackable backlog: `docs/FEATURE_TODOS.md`.
 - **Blockers:**
   - Live AppleScript behavior varies by account/mailbox volume and macOS privacy settings; needs targeted regression tests.
-  - DXT/uvx cache can pin old PyPI builds without explicit version pinning.
+  - Desktop bundle install/update behavior needs live validation after packaging changes.
 - **Next steps:**
   - Implement `MAIL-001` to make RFC `message_id` canonical everywhere (search/get/move/flag/delete).
   - Add regression tests `TST-001` and `TST-002`.

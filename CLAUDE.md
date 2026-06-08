@@ -1,6 +1,6 @@
 # Apple Ecosystem MCP — Implementation Guide
 
-An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts, Reminders, iCloud Drive) via AppleScript and Python. Distributed as a `.dxt` Desktop Extension + PyPI package.
+An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts, Reminders, iCloud Drive) via AppleScript and Python. Distributed as an `.mcpb` Desktop Extension through GitHub Releases.
 
 ## Critical Contracts (All Agents Must Follow)
 
@@ -106,7 +106,7 @@ apple-ecosystem-mcp/
 | 3 | Calendar Engineer | calendar.py tools (6 tools), calendar tests complete | Phase 1 |
 | 4 | Contacts Engineer | contacts.py + reminders.py tools (7 tools total), tests complete | Phase 1 |
 | 5 | Single session | icloud.py tools (5 tools), iCloud tests complete | Phase 1 |
-| 6 | Single session | manifest.json, .dxt bundling, GitHub release, PyPI publish | Phases 2–5 |
+| 6 | Single session | manifest.json, MCPB bundling, GitHub release | Phases 2–5 |
 
 ## How to Use This Document
 
@@ -127,22 +127,22 @@ apple-ecosystem-mcp/
 
 ```bash
 # Phase 1: develop on main
-uv sync --dev
-uv run pytest tests/ -v
+make install
+make test
 git add -A && git commit -m "feat: phase 1 scaffold + bridge + permissions"
 git push origin main
 
 # Phases 2–4: agents develop on feature branches
 git checkout -b phase-2-mail   # Mail Engineer
 # ... implement mail.py ...
-uv run pytest tests/tools/test_mail.py -v
+UV_CACHE_DIR=.uv-cache uv run pytest tests/tools/test_mail.py -v
 git commit -m "feat: phase 2 mail tools"
 # Message team lead: "Ready for review"
 
 # Phase 5–6: back to single session
 git checkout main && git pull   # Merge phases 2–4 first
 # ... implement icloud.py ...
-# ... create manifest.json, .dxt ...
+# ... create manifest.json, MCPB bundle ...
 ```
 
 ## Phase 6: Release Checklist (MANDATORY)
@@ -150,56 +150,46 @@ git checkout main && git pull   # Merge phases 2–4 first
 **Do not skip steps. Verify each before proceeding.**
 
 ### Pre-Release
-- [ ] All tests pass: `uv run pytest tests/ -k "not live" -v`
+- [ ] All tests pass: `make test`
 - [ ] No uncommitted changes: `git status` returns clean
-- [ ] docs/session-state.md updated with current session summary
 
 ### Version Bump
 - [ ] Update `pyproject.toml`: `version = "X.Y.Z"`
-- [ ] Update `manifest.json`: `version` and uvx `args` with new version
-- [ ] Update `PUBLISH_PYPI.sh`: Replace old version with new version (3 places)
+- [ ] Update `manifest.json`: `version = "X.Y.Z"`
 - [ ] Commit: `git commit -m "chore: version bump X.Y.Z → A.B.C, update session state"`
 
-### Build & Tag
-- [ ] Run: `uv build`
-- [ ] Verify artifacts exist: `dist/apple_ecosystem_mcp-A.B.C.tar.gz` and `.whl`
+### Build, Tag, Push
+- [ ] Build bundle: `make build`
+- [ ] Verify artifact exists: `mcpb/apple-ecosystem-mcp.mcpb`
 - [ ] Create git tag: `git tag -a vA.B.C -m "chore: release vA.B.C — [summary]"`
 - [ ] Push: `git push origin main`
 - [ ] Push tag: `git push origin vA.B.C`
 
 ### GitHub Release
 - [ ] Create release via `gh release create vA.B.C` with comprehensive notes
-- [ ] **[CRITICAL] Create .dxt file (correct ZIP structure - NO relative paths):**
+- [ ] **[CRITICAL] Create MCPB file (correct ZIP structure - NO relative paths):**
   ```bash
-  rm -rf dxt && mkdir -p dxt/contents
-  cp manifest.json logo.svg dxt/contents/
-  cp -r server dxt/contents/
-  cd dxt/contents && zip -r ../apple-ecosystem-mcp.dxt . && cd ../..
-  # Result: ZIP must contain (at root): manifest.json, logo.svg, server/
+  rm -rf mcpb && mkdir -p mcpb/contents
+  cp manifest.json logo.svg README.md LICENSE pyproject.toml uv.lock mcpb/contents/
+  cp -r server src mcpb/contents/
+  cd mcpb/contents && zip -r ../apple-ecosystem-mcp.mcpb . && cd ../..
+  # Result: ZIP must contain (at root): manifest.json, logo.svg, server/, src/, pyproject.toml, uv.lock
   ```
-- [ ] **[CRITICAL] Upload .dxt to release:** `gh release upload vA.B.C dxt/apple-ecosystem-mcp.dxt --clobber`
-- [ ] Upload wheel: `gh release upload vA.B.C dist/apple_ecosystem_mcp-A.B.C-py3-none-any.whl --clobber`
-- [ ] Upload tarball: `gh release upload vA.B.C dist/apple_ecosystem_mcp-A.B.C.tar.gz --clobber`
+- [ ] Upload MCPB to release: `gh release upload vA.B.C mcpb/apple-ecosystem-mcp.mcpb --clobber`
 
-### Verification (STOP HERE and verify all 3 assets)
+### Verification
 ```bash
 gh release view vA.B.C --json assets -q '.assets[] | "\(.name) (\(.size | tonumber / 1024 | floor) KB)"'
 ```
 **Must show:**
-- `apple-ecosystem-mcp.dxt` (~2 KB)
-- `apple_ecosystem_mcp-A.B.C-py3-none-any.whl` (~30-40 KB)
-- `apple_ecosystem_mcp-A.B.C.tar.gz` (~300-400 KB)
-
-### PyPI Publish
-- [ ] Set token: `export PYPI_TOKEN="pypi-YOUR_TOKEN"`
-- [ ] Publish: `bash PUBLISH_PYPI.sh`
-- [ ] Verify on PyPI: https://pypi.org/project/apple-ecosystem-mcp/
+- `apple-ecosystem-mcp.mcpb`
 
 ### Final Verification
 - [ ] GitHub release URL works: https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases/tag/vA.B.C
-- [ ] All 3 assets downloadable from release
-- [ ] PyPI shows new version: https://pypi.org/project/apple-ecosystem-mcp/
-- [ ] Commit all version-bump changes: nothing left uncommitted
+- [ ] MCPB downloads from release
+- [ ] MCPB installs in Claude Desktop
+- [ ] `hello_apple` works after install
+- [ ] Update `docs/session-state.md` with any post-release notes
 
 **Do not consider release complete until all checks pass and are verified.**
 
@@ -207,13 +197,13 @@ gh release view vA.B.C --json assets -q '.assets[] | "\(.name) (\(.size | tonumb
 
 ```bash
 # Phase 1: core tests only
-uv run pytest tests/test_bridge.py tests/test_permissions.py tests/test_server.py tests/test_main.py -v
+UV_CACHE_DIR=.uv-cache uv run pytest tests/test_bridge.py tests/test_permissions.py tests/test_server.py tests/test_main.py -v
 
 # During phase 2: mail + core tests
-uv run pytest tests/ -k "not live" -v
+make test
 
 # Full suite (phases 2–5):
-uv run pytest tests/ -k "not live" -v
+make test
 
 # Live macOS smoke tests (optional, requires real permissions):
 APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v

@@ -8,19 +8,21 @@ An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts
 
 ### Claude Desktop (recommended for most users)
 
-1. Download `apple-ecosystem-mcp.dxt` from [GitHub Releases](https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases)
-2. Double-click the `.dxt` file — Claude Desktop will prompt you to install it
+1. Download `apple-ecosystem-mcp.mcpb` from [GitHub Releases](https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases)
+2. Double-click the `.mcpb` file — Claude Desktop will prompt you to install it
 3. Restart Claude Desktop and grant macOS permissions when prompted
 
-### Claude Code
+### Local Development
 
-Install via `uvx` (requires uv package manager):
+Clone the repo and install dependencies:
 
 ```bash
-uvx apple-ecosystem-mcp
+git clone https://github.com/abhinavag-svg/apple-ecosystem-mcp.git
+cd apple-ecosystem-mcp
+make install
 ```
 
-Or configure locally in `~/.claude/claude_desktop_config.json`:
+For Claude Desktop development, add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {
@@ -152,26 +154,22 @@ See [PRIVACY.md](./PRIVACY.md) for the complete privacy policy and data handling
 
 ```bash
 cd apple-ecosystem-mcp
-pip install uv                    # Install uv package manager
-uv sync --dev                     # Install dependencies + dev extras
+make install
 ```
 
 ### Running Tests
 
 ```bash
-# Core infrastructure tests (Phase 1)
-uv run pytest tests/test_bridge.py tests/test_permissions.py tests/test_server.py tests/test_main.py -v
-
-# All tests (mocked, no real Mac required)
-uv run pytest tests/ -k "not live" -v
+# All non-live tests
+make test
 
 # Live macOS smoke tests (optional, requires real permissions)
 APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v
 ```
 
-### Local Development
+### Claude Desktop Development
 
-If you're developing locally before publishing to PyPI, add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+To run directly from a local checkout, add this to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
 {

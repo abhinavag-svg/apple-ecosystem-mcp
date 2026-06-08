@@ -1,16 +1,7 @@
-# Dependencies
-node_modules/
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
-npm-debug.log*
-yarn-error.log*
-
 # Build artifacts
 dist/
 build/
-dxt/
-*.tsbuildinfo
+mcpb/
 
 # Environment & Secrets
 .env
@@ -43,14 +34,9 @@ coverage/
 # Logs
 logs/
 *.log
-lerna-debug.log*
-
 # Cache
 .cache/
-.eslintcache
-.parcel-cache
-.jest-cache
-.turbo/
+.uv-cache/
 
 # Python
 __pycache__/
@@ -74,11 +60,6 @@ Desktop.ini
 
 # Linux
 .trash/
-
-# Node-specific
-.npm
-.node-gyp
-*.node
 
 # VSCode workspace settings (but keep settings.json for project)
 .vscode/settings.json.local

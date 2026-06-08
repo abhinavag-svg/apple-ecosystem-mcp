@@ -1,129 +1,72 @@
 # Architecture — Apple Ecosystem MCP
 
-## System Overview
+## Overview
 
-```
-┌─────────────────────────────────────────────────┐
-│           Claude / AI Clients                    │
-└────────────────┬────────────────────────────────┘
-                 │ MCP Protocol
-┌────────────────▼────────────────────────────────┐
-│     Apple Ecosystem MCP Server                  │
-│  ┌──────────────────────────────────────────┐  │
-│  │  Tool Router                              │  │
-│  │  - Dispatches requests to service libs   │  │
-│  │  - Aggregates responses                  │  │
-│  └──────────────────────────────────────────┘  │
-│                    │                            │
-│  ┌─────┬──────────┼──────────┬────────┐        │
-│  │     │          │          │        │        │
-│  ▼     ▼          ▼          ▼        ▼        │
-│ ┌──┐ ┌──┐ ┌──────┐ ┌──┐ ┌───────┐             │
-│ │IA│ │iC│ │iTunes│ │AS│ │Health│             │
-│ │M│ │lo│ │ Music│ │ │ │      │             │
-│ │  │ │ud│ │      │ │  │ │      │             │
-│ └──┘ └──┘ └──────┘ └──┘ └───────┘             │
-│ Service Libraries                               │
-│ (read-only queries, parsing, transformation)   │
-└────────────────┬────────────────────────────────┘
-                 │ HTTP / REST
-┌────────────────▼────────────────────────────────┐
-│        Apple Public APIs                        │
-│  (App Store, iCloud, iTunes, Health, etc.)    │
-└─────────────────────────────────────────────────┘
+Apple Ecosystem MCP is a local Python MCP server for Claude Desktop. It exposes tools for Apple Mail, Calendar, Contacts, Reminders, and iCloud Drive, and executes native macOS automation through AppleScript.
+
+```text
+Claude Desktop
+    |
+    | MCP over stdio
+    v
+FastMCP server
+    |
+    | Python tool handlers
+    v
+AppleScript bridge / filesystem helpers
+    |
+    v
+Mail, Calendar, Contacts, Reminders, iCloud Drive
 ```
 
-## Module Organization
+## Runtime
 
-### `/src/servers/`
-Each Apple service has its own isolated implementation:
-- **`iam-server.ts`** — Identity & Account Management
-  - User profile queries, account status, device list
-  - No write operations (read-only)
-  
-- **`icloud-server.ts`** — iCloud Services
-  - File storage status, backup info, settings
-  - Calendar/contact metadata queries
+- `src/apple_ecosystem_mcp/server.py` creates the FastMCP server and registers tools.
+- `src/apple_ecosystem_mcp/tools/` contains the app-specific tool modules.
+- `src/apple_ecosystem_mcp/bridge.py` runs AppleScript through `osascript`.
+- `src/apple_ecosystem_mcp/permissions.py` checks common macOS permission gaps at startup.
+- `server/runner.py` is the MCPB bundle entrypoint. It runs the bundled source with `uv run --project`.
 
-- **`itunes-music-server.ts`** — iTunes Music
-  - Library browsing, playlist info, purchase history
-  - Playback metadata, recommendations
+The server runs locally. It does not host an HTTP service or store credentials.
 
-- **`appstore-server.ts`** — App Store
-  - App info lookup, ratings, pricing
-  - Purchase/subscription status
+## Distribution
 
-- **`health-server.ts`** — Apple Health
-  - Health data summaries (via HealthKit)
-  - Metrics and trends
+The project ships as a GitHub Release asset:
 
-### `/src/lib/`
-Shared utilities:
-- **`auth.ts`** — OAuth token management, refresh
-- **`http.ts`** — Rate-limited HTTP client with retries
-- **`parser.ts`** — XML/JSON response parsing
-- **`types.ts`** — Shared TypeScript interfaces
-- **`cache.ts`** — In-memory cache with TTL
-
-## Data Flow
-
-### Query Example: "List my purchased apps"
-```
-Client Request
-    ↓
-Tool Router (appstore-server)
-    ↓
-HTTP Client (with auth header)
-    ↓
-App Store API → XML Response
-    ↓
-Parser (extract app list)
-    ↓
-Type Check (ensure AppInfo shape)
-    ↓
-Response to Client
+```text
+apple-ecosystem-mcp.mcpb
 ```
 
-## Key Constraints
+The MCPB contains:
 
-1. **Read-only:** All services are query-only (no mutations). Design decisions are in commits; see git log.
-2. **Rate Limiting:** Apple APIs enforce per-IP limits. Cache aggressively; client retries with exponential backoff.
-3. **Auth:** OAuth tokens expire. Refresh tokens stored in memory (not persistent) per request.
-4. **Schema Stability:** Breaking changes in Apple API responses may require version bump. Update TypeScript types in `src/types/`.
+- `manifest.json`
+- `server/runner.py`
+- `src/apple_ecosystem_mcp/`
+- `pyproject.toml`
+- `uv.lock`
+- `README.md`
+- `LICENSE`
+- `logo.svg`
 
-## Testing Strategy
+Claude Desktop launches the bundle entrypoint. The runner uses the bundled source tree, so the project itself does not require a separate package publishing step.
 
-- **Unit tests:** Mock API responses, test parsers and type guards in isolation
-- **Integration tests:** Hit staging/sandbox APIs if available; real requests to public read endpoints if not
-- **E2E:** Manual verification with real Apple accounts (quarterly)
+## Safety Constraints
 
-See [../tests/](../tests/) for test structure.
+- User data is passed to AppleScript as positional arguments, never interpolated into AppleScript source.
+- AppleScript calls are serialized with a module-level lock because GUI scripting is not thread-safe.
+- Tool results are bounded and truncated where needed.
+- Destructive tools require explicit confirmation arguments.
+- iCloud paths are resolved relative to the iCloud root and checked for path traversal.
+- AppleScript stderr is not surfaced directly to Claude because it may contain private data.
 
-## Dependencies
+## Testing
 
-| Package | Purpose | Risk |
-|---------|---------|------|
-| `mcp` | Protocol implementation | Low (Anthropic-maintained) |
-| `node-fetch` | HTTP client | Low (widely used) |
-| `xml2js` | XML parsing | Low (stable, security reviewed) |
-
-No authentication libraries in deps — tokens are client-provided (zero storage risk).
-
-## Deployment
-
-Runs as standalone MCP server:
 ```bash
-node dist/index.js
+make test
 ```
 
-Claude connects via stdio. No database, no persistent state.
+Live tests are opt-in and require a real macOS account with permissions granted:
 
-## Future: Data Sync
-
-If we add write operations later:
-- Implement transactional guards
-- Add audit logging
-- Require explicit user confirmation for mutations
-- Review Apple ToS compliance
-
-For now: read-only by design.
+```bash
+APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v
+```
