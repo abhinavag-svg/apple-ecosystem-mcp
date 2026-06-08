@@ -4,8 +4,8 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
 - **Last changed:** 2026-06-08
-- **Current version:** v0.3.0 (GitHub release current; release process now simplified for next version)
-- **Next TODO:** Release the post-0.3.0 runtime fixes as a GitHub MCPB, then test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
+- **Current version:** v0.3.1 (GitHub MCPB release)
+- **Next TODO:** Test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
 
