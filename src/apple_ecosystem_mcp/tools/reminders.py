@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
 from ..server import mcp
 
 _PERMISSION_DENIED_SENTINEL = "__APPLE_ECOSYSTEM_MCP_REMINDERS_PERMISSION_DENIED__"
@@ -397,6 +397,7 @@ end run
 """
 
 
+@cache_inventory("reminders_lists", ttl=30)
 @mcp.tool(annotations=ToolAnnotations(title="List Reminder Lists", readOnlyHint=True))
 def reminders_lists(include_metadata: bool = False) -> list[Any]:
     """List reminder lists.

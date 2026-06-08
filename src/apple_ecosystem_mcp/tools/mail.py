@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
 from ..server import mcp
 
 # Result-size policy per CLAUDE.md
@@ -148,6 +148,7 @@ end jsonString
 """
 
 
+@cache_inventory("mail_mailboxes", ttl=30)
 @mcp.tool(annotations=ToolAnnotations(title="List Mailboxes", readOnlyHint=True))
 def mail_list_mailboxes() -> list[dict]:
     """List all mailboxes across every Mail account with canonical ids."""

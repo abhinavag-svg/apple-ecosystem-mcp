@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
 from ..server import mcp
 
 # Result-size limits (see Implementation Plan §Result-Size Policy).
@@ -522,6 +522,7 @@ def _with_attendees_alias(record: dict) -> dict:
     return record
 
 
+@cache_inventory("calendars", ttl=30)
 def _calendars_cached() -> list[dict]:
     raw = run_applescript(_LIST_CALENDARS_SCRIPT)
     data = _parse_json(raw)

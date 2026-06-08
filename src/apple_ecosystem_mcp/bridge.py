@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import subprocess
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Callable, Iterable
 
-_lock = threading.Lock()
+_lock = threading.Lock()  # Serializes AppleScript calls (not reentrant)
+_cache_lock = threading.Lock()  # Protects cache dict
+_cache: dict[str, tuple[float, Any]] = {}
 
 _logger = logging.getLogger("apple_ecosystem_mcp.bridge")
 _logger.propagate = False
@@ -91,3 +95,39 @@ def run_applescript(script: str, *args: str) -> str:
         raise RuntimeError(f"AppleScript failed (exit {result.returncode})")
 
     return (result.stdout or "").strip()
+
+
+def clear_inventory_cache() -> None:
+    """Clear all cached inventory results. Used in tests."""
+    with _cache_lock:
+        _cache.clear()
+
+
+def cache_inventory(cache_key: str, ttl: int = 30) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Decorator to cache inventory results for a given TTL (seconds).
+
+    Thread-safe: uses a separate cache lock (not the AppleScript lock).
+    Useful for expensive operations like mail_list_mailboxes(), reminders_lists(), etc.
+
+    Args:
+        cache_key: Unique key for this cached inventory (e.g., "mail_mailboxes")
+        ttl: Cache TTL in seconds (default 30)
+
+    Returns:
+        Decorator that wraps the function with caching
+    """
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            now = time.time()
+            with _cache_lock:
+                if cache_key in _cache:
+                    cached_time, cached_value = _cache[cache_key]
+                    if now - cached_time < ttl:
+                        return cached_value
+            result = func(*args, **kwargs)
+            with _cache_lock:
+                _cache[cache_key] = (now, result)
+            return result
+        return wrapper
+    return decorator
