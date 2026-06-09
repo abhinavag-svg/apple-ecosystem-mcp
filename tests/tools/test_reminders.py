@@ -82,8 +82,8 @@ def test_reminders_list_filters_by_list_name(monkeypatch):
     assert run_mock.call_args.args[2] == "Groceries"
     # completed=False by default
     assert run_mock.call_args.args[3] == "false"
-    assert run_mock.call_args.args[5] == "100"
-    assert run_mock.call_args.kwargs["timeout"] == 35
+    assert run_mock.call_args.args[5] == "60"
+    assert run_mock.call_args.kwargs["timeout"] == 10
 
 
 def test_reminders_list_filters_by_stable_list_id(monkeypatch):
@@ -115,7 +115,20 @@ def test_reminders_list_scan_limit_scales_with_result_limit(monkeypatch):
     run_mock = _patch_run(monkeypatch, "[]")
     reminders.reminders_list(list_name="Work", limit=3)
     assert run_mock.call_args.args[4] == "3"
-    assert run_mock.call_args.args[5] == "15"
+    assert run_mock.call_args.args[5] == "9"
+
+
+def test_reminders_list_timeout_returns_structured_degraded_result(monkeypatch):
+    def timeout(*_args, **_kwargs):
+        raise RuntimeError("AppleScript timed out")
+
+    monkeypatch.setattr(reminders, "run_applescript", timeout)
+    out = reminders.reminders_list(list_name="Work")
+    assert isinstance(out, dict)
+    assert out["error"] == "tool_timeout"
+    assert out["tool"] == "reminders_list"
+    assert out["list_name"] == "Work"
+    assert out["timeout_seconds"] == 10
 
 
 def test_reminders_list_returns_canonical_shape(monkeypatch):

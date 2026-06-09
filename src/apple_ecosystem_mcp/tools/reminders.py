@@ -40,6 +40,18 @@ def _run_reminders_script(script: str, args: tuple[str, ...] = (), *, timeout: i
     return raw
 
 
+def _timeout_payload(list_name: str | None, reminders_list_id: str | None, timeout: int) -> dict[str, Any]:
+    return {
+        "error": "tool_timeout",
+        "tool": "reminders_list",
+        "message": "Reminders did not return items before the local timeout.",
+        "list_name": list_name,
+        "list_id": reminders_list_id,
+        "timeout_seconds": timeout,
+        "hint": "Try a smaller limit, another list, or use reminders_lists to inspect available lists.",
+    }
+
+
 def _nn(value):
     if value is None:
         return None
@@ -464,17 +476,24 @@ def reminders_list(
             "hint": "Call reminders_list again with list_name=<name> from the list above",
         }
     capped = max(1, min(int(limit), 100))
-    scan_limit = max(capped, min(capped * 5, 100))
-    raw = _run_reminders_script(
-        _LIST_SCRIPT,
-        (
-            reminders_list_id or "",
-            list_name or "",
-            "true" if completed else "false",
-            str(capped),
-            str(scan_limit),
-        ),
-    )
+    scan_limit = max(capped, min(capped * 3, 60))
+    timeout_seconds = 10
+    try:
+        raw = _run_reminders_script(
+            _LIST_SCRIPT,
+            (
+                reminders_list_id or "",
+                list_name or "",
+                "true" if completed else "false",
+                str(capped),
+                str(scan_limit),
+            ),
+            timeout=timeout_seconds,
+        )
+    except RuntimeError as e:
+        if str(e) == "AppleScript timed out":
+            return _timeout_payload(list_name, reminders_list_id, timeout_seconds)
+        raise
     try:
         parsed = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:

@@ -25,6 +25,13 @@ def test_run_applescript_nonzero_exit_raises_without_stderr(mock_osascript):
     assert "sensitive" not in str(e.value)
 
 
+def test_run_applescript_nonzero_exit_reports_app_not_running(mock_osascript):
+    mock_osascript(stdout="", stderr="Calendar got an error: Application isn\u2019t running. (-600)", returncode=1)
+    with pytest.raises(RuntimeError) as e:
+        run_applescript("return 1")
+    assert str(e.value) == "AppleScript failed: application not running"
+
+
 def test_run_applescript_timeout(timeout_error_factory):
     timeout_error_factory()
     with pytest.raises(RuntimeError) as e:

@@ -659,6 +659,11 @@ def test_mail_get_thread_rejects_non_dict(monkeypatch):
         mail.mail_get_thread("<m@x>")
 
 
+def test_mail_get_thread_uses_safe_mailbox_identifier_helper():
+    assert "set mbId to my mailboxIdentifier(mb)" in mail._GET_THREAD_SCRIPT
+    assert "on mailboxIdentifier(mb)" in mail._GET_THREAD_SCRIPT
+
+
 # ---------------------------------------------------------------------------
 # mail_send
 # ---------------------------------------------------------------------------

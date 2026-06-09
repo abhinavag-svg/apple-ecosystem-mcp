@@ -94,6 +94,8 @@ def run_applescript(script: str, *args: str, timeout: int = 60) -> str:
     if result.returncode != 0:
         # Do not surface stderr to callers; it may include user data (subjects, names, paths).
         _logger.debug("osascript failed (exit %s): %s", result.returncode, result.stderr)
+        if "Application isn" in result.stderr and "running" in result.stderr:
+            raise RuntimeError("AppleScript failed: application not running")
         raise RuntimeError(f"AppleScript failed (exit {result.returncode})")
 
     return (result.stdout or "").strip()

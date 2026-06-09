@@ -618,7 +618,7 @@ on run argv
                 end if
                 if (count of candidates) > 0 then
                     set target to item 1 of candidates
-                    set mbId to id of mb as string
+                    set mbId to my mailboxIdentifier(mb)
                     set acctName to name of acct
                     exit repeat
                 end if
@@ -665,6 +665,21 @@ on run argv
         return "{\"id\":" & my jsonString(mid) & ",\"subject\":" & my jsonString(subj) & ",\"sender\":" & my jsonString(snd) & ",\"date\":" & my jsonString(dte) & ",\"mailbox_id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"attachments\":" & atts & bodyField & "}"
     end tell
 end run
+
+on mailboxIdentifier(mb)
+    set mbId to ""
+    tell application "Mail"
+        try
+            set mbId to id of mb as text
+        end try
+        if mbId is "" then
+            try
+                set mbId to name of mb as string
+            end try
+        end if
+    end tell
+    return mbId
+end mailboxIdentifier
 
 on jsonString(s)
     if s is missing value then return "null"
