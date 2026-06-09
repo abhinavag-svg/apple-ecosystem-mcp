@@ -46,13 +46,19 @@ def _safe(user_path: str) -> Path:
 
 def _metadata(path: Path) -> dict:
     stat = path.stat()
+    is_dir = path.is_dir()
     return {
+        "id": "/" + str(path.relative_to(ICLOUD_ROOT)),
         "name": path.name,
         "path": "/" + str(path.relative_to(ICLOUD_ROOT)),
+        "kind": "directory" if is_dir else "file",
+        "account_name": None,
+        "writable": os.access(path, os.W_OK),
+        "default_candidate": is_dir,
         "size_bytes": stat.st_size,
         "modified": stat.st_mtime,
         "created": stat.st_ctime,
-        "is_dir": path.is_dir(),
+        "is_dir": is_dir,
         "is_file": path.is_file(),
     }
 

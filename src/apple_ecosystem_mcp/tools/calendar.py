@@ -6,7 +6,9 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
+from ..preferences import PreferencesStore
+from ..resolver import ResolverError, resolve_target
 from ..server import mcp
 
 # Result-size limits (see Implementation Plan §Result-Size Policy).
@@ -85,6 +87,47 @@ on _iso(d)
     return "\"" & ((d as «class isot») as string) & "\""
 end _iso
 """
+
+
+def _nn(value):
+    if value is None:
+        return None
+    if isinstance(value, str) and (value == "" or value == "missing value"):
+        return None
+    return value
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"", "null", "missing value"}:
+            return None
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    return bool(value)
+
+
+def _normalize_calendar_row(row: dict, default_candidate: bool = False) -> dict:
+    uid = _nn(row.get("uid"))
+    name = _nn(row.get("name"))
+    account_name = _nn(row.get("account_name"))
+    writable = _normalize_optional_bool(row.get("writable"))
+    return {
+        "id": uid,
+        "uid": uid,
+        "name": name,
+        "kind": "calendar",
+        "account_name": account_name,
+        "path": None,
+        "writable": writable,
+        "default_candidate": default_candidate,
+    }
 
 
 _LIST_CALENDARS_SCRIPT = r"""
@@ -522,12 +565,23 @@ def _with_attendees_alias(record: dict) -> dict:
     return record
 
 
+@cache_inventory("calendars", ttl=30)
 def _calendars_cached() -> list[dict]:
-    raw = run_applescript(_LIST_CALENDARS_SCRIPT)
+    raw = run_applescript(_LIST_CALENDARS_SCRIPT, timeout=25)
     data = _parse_json(raw)
     if not isinstance(data, list):
         raise RuntimeError("Unexpected calendars payload")
-    return data
+    normalized: list[dict] = []
+    default_marked = False
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        item = _normalize_calendar_row(row)
+        if item["writable"] is True and not default_marked:
+            item["default_candidate"] = True
+            default_marked = True
+        normalized.append(item)
+    return normalized
 
 
 def _require_writable_uid(calendar_uid: str | None) -> None:
@@ -544,6 +598,23 @@ def _require_writable_uid(calendar_uid: str | None) -> None:
                 raise RuntimeError("Calendar is not writable")
             return
     raise RuntimeError("Calendar not found")
+
+
+def _resolve_calendar_uid(calendar_uid: str | None) -> tuple[str | None, dict[str, Any] | None]:
+    preferences = PreferencesStore()
+    should_use_default = calendar_uid is None and preferences.get_default("calendar") is not None
+    if calendar_uid is None and not should_use_default:
+        return None, None
+
+    resolved = resolve_target(
+        calendar_uid,
+        _calendars_cached(),
+        scope="calendar",
+        preferences=preferences,
+        require_writable=True,
+        use_default=should_use_default,
+    )
+    return str(resolved.item["id"]), resolved.to_dict()
 
 
 def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
@@ -587,7 +658,7 @@ def calendar_list_events(
     end_norm = _normalize_calendar_iso(end)
 
     capped = max(1, min(int(limit), LIST_EVENTS_MAX_LIMIT))
-    raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "")
+    raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "", timeout=35)
     data = _parse_json(raw)
     if not isinstance(data, list):
         raise RuntimeError("Unexpected events payload")
@@ -597,7 +668,7 @@ def calendar_list_events(
 @mcp.tool(annotations=ToolAnnotations(title="Get Event", readOnlyHint=True))
 def calendar_get_event(event_id: str) -> dict:
     """Get details for a specific event by canonical UID."""
-    raw = run_applescript(_GET_EVENT_SCRIPT, event_id)
+    raw = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
     data = _parse_json(raw)
     if data is None:
         raise RuntimeError("Event not found")
@@ -623,7 +694,14 @@ def calendar_create_event(
     """
     start_norm = _normalize_calendar_iso(start)
     end_norm = _normalize_calendar_iso(end)
-    _require_writable_uid(calendar_uid)
+    try:
+        resolved_calendar_uid, _ = _resolve_calendar_uid(calendar_uid)
+    except ResolverError as exc:
+        return exc.to_dict()
+    if resolved_calendar_uid is None:
+        _require_writable_uid(calendar_uid)
+    else:
+        calendar_uid = resolved_calendar_uid
 
     invitees_csv = ",".join(_dedupe_emails(invitees))
     raw = run_applescript(
@@ -635,6 +713,7 @@ def calendar_create_event(
         location or "",
         notes or "",
         invitees_csv,
+        timeout=35,
     )
     data = _parse_json(raw)
     if not isinstance(data, dict) or "uid" not in data:
@@ -676,7 +755,7 @@ def calendar_update_event(
 
     # Writable check: locate the event's calendar via get_event so we refuse
     # edits on read-only calendars. Cheap because the AppleScript scans already.
-    current = run_applescript(_GET_EVENT_SCRIPT, event_id)
+    current = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
     current_data = _parse_json(current)
     if current_data is None:
         raise RuntimeError("Event not found")
@@ -696,6 +775,7 @@ def calendar_update_event(
         invitees_csv,
         "true" if clear_location else "false",
         "true" if clear_notes else "false",
+        timeout=35,
     )
     data = _parse_json(raw)
     if not isinstance(data, dict) or "uid" not in data:
@@ -708,7 +788,7 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     """Delete an event by UID. Requires confirm=True; otherwise returns a preview."""
     if not confirm:
         try:
-            preview_raw = run_applescript(_GET_EVENT_SCRIPT, event_id)
+            preview_raw = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
             preview_data = _parse_json(preview_raw)
             title = (
                 preview_data.get("title")
@@ -723,7 +803,7 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
             "confirmed": False,
         }
 
-    run_applescript(_DELETE_EVENT_SCRIPT, event_id)
+    run_applescript(_DELETE_EVENT_SCRIPT, event_id, timeout=35)
     return {"uid": event_id, "success": True}
 
 
@@ -748,7 +828,7 @@ def calendar_find_free_time(
     # but end inside them.
     day_start_iso = datetime.combine(day, datetime.min.time()).isoformat()
     day_end_iso = (datetime.combine(day, datetime.min.time()) + timedelta(days=1)).isoformat()
-    raw = run_applescript(_LIST_EVENTS_SCRIPT, day_start_iso, day_end_iso, "")
+    raw = run_applescript(_LIST_EVENTS_SCRIPT, day_start_iso, day_end_iso, "", timeout=35)
     events = _parse_json(raw) or []
     if not isinstance(events, list):
         raise RuntimeError("Unexpected events payload")

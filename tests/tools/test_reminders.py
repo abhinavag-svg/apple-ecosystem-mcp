@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from apple_ecosystem_mcp.preferences import PreferencesStore
 from apple_ecosystem_mcp.tools import reminders
 
 
@@ -32,8 +33,24 @@ def test_reminders_lists_can_return_stable_ids(monkeypatch):
     )
     out = reminders.reminders_lists(include_metadata=True)
     assert out == [
-        {"id": "LIST-1", "name": "Reminders"},
-        {"id": "LIST-2", "name": "Groceries"},
+        {
+            "id": "LIST-1",
+            "name": "Reminders",
+            "kind": "reminder_list",
+            "account_name": None,
+            "path": None,
+            "writable": None,
+            "default_candidate": True,
+        },
+        {
+            "id": "LIST-2",
+            "name": "Groceries",
+            "kind": "reminder_list",
+            "account_name": None,
+            "path": None,
+            "writable": None,
+            "default_candidate": False,
+        },
     ]
 
 
@@ -65,6 +82,8 @@ def test_reminders_list_filters_by_list_name(monkeypatch):
     assert run_mock.call_args.args[2] == "Groceries"
     # completed=False by default
     assert run_mock.call_args.args[3] == "false"
+    assert run_mock.call_args.args[5] == "100"
+    assert run_mock.call_args.kwargs["timeout"] == 35
 
 
 def test_reminders_list_filters_by_stable_list_id(monkeypatch):
@@ -90,6 +109,13 @@ def test_reminders_list_filters_by_completed_flag(monkeypatch):
     run_mock = _patch_run(monkeypatch, "[]")
     reminders.reminders_list(list_name="Work", completed=True)
     assert run_mock.call_args.args[3] == "true"
+
+
+def test_reminders_list_scan_limit_scales_with_result_limit(monkeypatch):
+    run_mock = _patch_run(monkeypatch, "[]")
+    reminders.reminders_list(list_name="Work", limit=3)
+    assert run_mock.call_args.args[4] == "3"
+    assert run_mock.call_args.args[5] == "15"
 
 
 def test_reminders_list_returns_canonical_shape(monkeypatch):
@@ -154,7 +180,13 @@ def test_reminders_list_normalizes_missing_values(monkeypatch):
 
 
 def test_reminders_create_accepts_due_notes_priority(monkeypatch):
-    run_mock = _patch_run(monkeypatch, "R-UUID-NEW")
+    run_mock = Mock(
+        side_effect=[
+            json.dumps([{"id": "LIST-2", "name": "Work"}]),
+            "R-UUID-NEW",
+        ]
+    )
+    monkeypatch.setattr(reminders, "run_applescript", run_mock)
     result = reminders.reminders_create(
         title="Follow up",
         list_name="Work",
@@ -165,7 +197,7 @@ def test_reminders_create_accepts_due_notes_priority(monkeypatch):
     assert result == {"id": "R-UUID-NEW", "success": True}
     call = run_mock.call_args
     assert call.args[1] == "Follow up"
-    assert call.args[2] == ""
+    assert call.args[2] == "LIST-2"
     assert call.args[3] == "Work"
     assert call.args[4] == "2026-04-25T14:30:00"
     assert call.args[5] == "Check the proposal"
@@ -173,7 +205,13 @@ def test_reminders_create_accepts_due_notes_priority(monkeypatch):
 
 
 def test_reminders_create_targets_stable_list_id(monkeypatch):
-    run_mock = _patch_run(monkeypatch, "R-UUID-NEW")
+    run_mock = Mock(
+        side_effect=[
+            json.dumps([{"id": "LIST-2", "name": "Duplicate Name"}]),
+            "R-UUID-NEW",
+        ]
+    )
+    monkeypatch.setattr(reminders, "run_applescript", run_mock)
     result = reminders.reminders_create(
         title="Follow up",
         reminders_list_id="LIST-2",
@@ -184,6 +222,62 @@ def test_reminders_create_targets_stable_list_id(monkeypatch):
     assert call.args[1] == "Follow up"
     assert call.args[2] == "LIST-2"
     assert call.args[3] == "Duplicate Name"
+
+
+def test_reminders_create_resolves_unique_list_name_to_stable_id(monkeypatch):
+    run_mock = Mock(
+        side_effect=[
+            json.dumps(
+                [
+                    {"id": "LIST-1", "name": "Home"},
+                    {"id": "LIST-2", "name": "Work"},
+                ]
+            ),
+            "R-UUID-NEW",
+        ]
+    )
+    monkeypatch.setattr(reminders, "run_applescript", run_mock)
+    result = reminders.reminders_create(title="Follow up", list_name="Work")
+    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert run_mock.call_args.args[2] == "LIST-2"
+    assert run_mock.call_args.args[3] == "Work"
+
+
+def test_reminders_create_returns_structured_ambiguous_list_error(monkeypatch):
+    _patch_run(
+        monkeypatch,
+        json.dumps(
+            [
+                {"id": "LIST-1", "name": "Work"},
+                {"id": "LIST-2", "name": "Work"},
+            ]
+        ),
+    )
+    out = reminders.reminders_create(title="Follow up", list_name="Work")
+    assert out["error"] == "target_ambiguous"
+    assert len(out["candidates"]) == 2
+
+
+def test_reminders_create_uses_preference_default_list(monkeypatch, tmp_path):
+    store = PreferencesStore(tmp_path / "preferences.json")
+    store.set_default("reminder_list", {"id": "LIST-2", "name": "Work", "kind": "reminder_list"})
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_CONFIG_DIR", str(tmp_path))
+    run_mock = Mock(
+        side_effect=[
+            json.dumps(
+                [
+                    {"id": "LIST-1", "name": "Home"},
+                    {"id": "LIST-2", "name": "Work"},
+                ]
+            ),
+            "R-UUID-NEW",
+        ]
+    )
+    monkeypatch.setattr(reminders, "run_applescript", run_mock)
+    result = reminders.reminders_create(title="Follow up")
+    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert run_mock.call_args.args[2] == "LIST-2"
+    assert run_mock.call_args.args[3] == "Work"
 
 
 def test_reminders_create_defaults(monkeypatch):
@@ -213,13 +307,20 @@ def test_reminders_create_accepts_date_only_iso(monkeypatch):
 
 
 def test_reminders_create_uses_argv_not_interpolation(monkeypatch):
-    run_mock = _patch_run(monkeypatch, "R-UUID-NEW")
+    run_mock = Mock(
+        side_effect=[
+            json.dumps([{"id": "LIST-9", "name": 'hack"; do shell script "evil"'}]),
+            "R-UUID-NEW",
+        ]
+    )
+    monkeypatch.setattr(reminders, "run_applescript", run_mock)
     nasty = 'hack"; do shell script "evil"'
     reminders.reminders_create(title=nasty, list_name=nasty, notes=nasty)
     call = run_mock.call_args
     script_src = call.args[0]
     assert nasty not in script_src
     assert call.args[1] == nasty
+    assert call.args[2] == "LIST-9"
     assert call.args[3] == nasty
     assert call.args[5] == nasty
 

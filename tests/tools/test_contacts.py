@@ -308,6 +308,31 @@ def test_contacts_list_groups_filters_empty_and_missing(monkeypatch):
     assert out == ["Friends", "Work"]
 
 
+def test_contacts_list_groups_can_return_metadata(monkeypatch):
+    _patch_run(monkeypatch, json.dumps(["Friends", "Work"]))
+    out = contacts.contacts_list_groups(include_metadata=True)
+    assert out == [
+        {
+            "id": "Friends",
+            "name": "Friends",
+            "kind": "contact_group",
+            "account_name": None,
+            "path": None,
+            "writable": None,
+            "default_candidate": True,
+        },
+        {
+            "id": "Work",
+            "name": "Work",
+            "kind": "contact_group",
+            "account_name": None,
+            "path": None,
+            "writable": None,
+            "default_candidate": False,
+        },
+    ]
+
+
 def test_contacts_permission_failure_surfaces_as_runtime_error(monkeypatch):
     def raise_runtime(*args, **kwargs):
         raise RuntimeError("AppleScript failed (exit 1)")

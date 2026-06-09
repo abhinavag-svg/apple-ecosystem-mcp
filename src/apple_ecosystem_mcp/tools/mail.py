@@ -6,7 +6,9 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
+from ..preferences import PreferencesStore
+from ..resolver import ResolverError, resolve_target
 from ..server import mcp
 
 # Result-size policy per CLAUDE.md
@@ -24,6 +26,30 @@ def _parse_json(raw: str) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Malformed AppleScript JSON output: {e.msg}") from e
+
+
+def _nn(value):
+    if value is None:
+        return None
+    if isinstance(value, str) and (value == "" or value == "missing value"):
+        return None
+    return value
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"", "null", "missing value"}:
+            return None
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+    return bool(value)
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -83,7 +109,17 @@ on run argv
                     set mbId to mbName
                 end if
                 set mbPath to my buildMailboxPath(mb)
-                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"path\":" & my jsonString(mbPath) & "}"
+                set mbWritable to missing value
+                try
+                    set mbWritable to writable of mb
+                end try
+                set writableStr to "null"
+                if mbWritable is true then
+                    set writableStr to "true"
+                else if mbWritable is false then
+                    set writableStr to "false"
+                end if
+                set output to output & "{\"name\":" & my jsonString(mbName) & ",\"id\":" & my jsonString(mbId) & ",\"account_name\":" & my jsonString(acctName) & ",\"path\":" & my jsonString(mbPath) & ",\"writable\":" & writableStr & "}"
             end repeat
         end repeat
     end tell
@@ -149,13 +185,34 @@ end jsonString
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Mailboxes", readOnlyHint=True))
+@cache_inventory("mail_mailboxes", ttl=30)
 def mail_list_mailboxes() -> list[dict]:
     """List all mailboxes across every Mail account with canonical ids."""
     raw = run_applescript(_LIST_MAILBOXES_SCRIPT)
     data = _parse_json(raw) or []
     if not isinstance(data, list):
         raise RuntimeError("Unexpected mail_list_mailboxes payload shape")
-    return data
+    normalized: list[dict] = []
+    for row in data:
+        if not isinstance(row, dict):
+            continue
+        name = _nn(row.get("name"))
+        path = _nn(row.get("path"))
+        item = {
+            "id": _nn(row.get("id")),
+            "name": name,
+            "kind": "mailbox",
+            "account_name": _nn(row.get("account_name")),
+            "path": path,
+            "writable": _normalize_optional_bool(row.get("writable")),
+            "default_candidate": False,
+        }
+        if name and str(name).casefold() == "inbox":
+            item["default_candidate"] = True
+        elif path and str(path).casefold() == "inbox":
+            item["default_candidate"] = True
+        normalized.append(item)
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +250,7 @@ on run argv
     set searchSender to searchSenderStr is "1"
     set toAddr to item (mbIdsIdx + 2) of argv
     set ccAddr to item (mbIdsIdx + 3) of argv
+    set maxScanTotal to (item (mbIdsIdx + 4) of argv) as integer
 
     -- Check if any filters are active
     set hasFilters to false
@@ -207,14 +265,17 @@ on run argv
     set output to "["
     set firstItem to true
     set count_ to 0
+    set scannedTotal to 0
 
     tell application "Mail"
         repeat with acct in accounts
+            if scannedTotal ≥ maxScanTotal then exit repeat
             set acctName to name of acct
             set checkAcctFilter to acctNameFilter is "" or acctName is acctNameFilter
 
             if checkAcctFilter then
                 repeat with mb in mailboxes of acct
+                    if scannedTotal ≥ maxScanTotal then exit repeat
                     set shouldSearch to false
                     if mbIdsCount > 0 then
                         set mbIdStr to ""
@@ -266,8 +327,10 @@ on run argv
 
                         repeat with offset_ from 0 to (scanLim - 1)
                             if count_ ≥ lim then exit repeat
+                            if scannedTotal ≥ maxScanTotal then exit repeat
                             set idx_ to (mCount - offset_)
                             if idx_ < 1 then exit repeat
+                            set scannedTotal to scannedTotal + 1
 
                             set msg to missing value
                             try
@@ -415,6 +478,7 @@ on run argv
                 end repeat
             end if
             if count_ ≥ lim then exit repeat
+            if scannedTotal ≥ maxScanTotal then exit repeat
         end repeat
     end tell
     return output & "]"
@@ -511,8 +575,14 @@ def mail_search(
     args.append("1" if "sender" in search_fields else "0")
     args.append(filters.get("to_addr") or "")
     args.append(filters.get("cc_addr") or "")
+    max_scan_total = capped * 40
+    if "body" in search_fields:
+        max_scan_total = capped * 15
+    if filters.get("mailbox_ids") or mailbox_id:
+        max_scan_total *= 2
+    args.append(str(max(50, min(max_scan_total, 800))))
 
-    raw = run_applescript(_SEARCH_SCRIPT, *args)
+    raw = run_applescript(_SEARCH_SCRIPT, *args, timeout=35)
     data = _parse_json(raw) or []
     if not isinstance(data, list):
         raise RuntimeError("Unexpected mail_search payload shape")
@@ -896,12 +966,24 @@ end run
 @mcp.tool(annotations=ToolAnnotations(title="Move Message", destructiveHint=True))
 def mail_move_message(message_id: str, mailbox_id: str) -> dict:
     """Move a Mail message to a mailbox by persistent id."""
-    raw = run_applescript(_MOVE_SCRIPT, message_id, mailbox_id)
+    try:
+        resolved = resolve_target(
+            mailbox_id,
+            mail_list_mailboxes(),
+            scope="mailbox",
+            preferences=PreferencesStore(),
+            require_writable=True,
+        )
+    except ResolverError as exc:
+        return exc.to_dict()
+
+    resolved_mailbox_id = str(resolved.item["id"])
+    raw = run_applescript(_MOVE_SCRIPT, message_id, resolved_mailbox_id)
     data = _parse_json(raw) or {"success": True}
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected mail_move_message payload shape")
     data["message_id"] = message_id
-    data["mailbox_id"] = mailbox_id
+    data["mailbox_id"] = resolved_mailbox_id
     return data
 
 

@@ -8,6 +8,16 @@ from unittest.mock import Mock
 
 import pytest
 
+from apple_ecosystem_mcp.bridge import clear_inventory_cache
+
+
+@pytest.fixture(autouse=True)
+def clear_caches():
+    """Clear inventory cache before each test to avoid cross-test contamination."""
+    clear_inventory_cache()
+    yield
+    clear_inventory_cache()
+
 
 @pytest.fixture
 def completed_process_factory() -> Callable[..., CompletedProcess[str]]:

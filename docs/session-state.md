@@ -4,10 +4,27 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
 - **Last changed:** 2026-06-08
-- **Current version:** v0.3.3 (GitHub MCPB release)
-- **Next TODO:** Test live AppleScript behavior for Calendar, Reminders, and Contacts. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
+- **Current version:** v0.4.0 (GitHub MCPB release)
+- **Next TODO:** Re-test installed MCPB in Claude Desktop against real Mail, Calendar, Contacts, and Reminders data. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
 
 ## Session Log
+
+### Session 5 (2026-06-08, practical-use, scheduling, and timeout hardening)
+- **What changed:**
+  - Added local preferences, aliases, stable target resolution, and Apple inventory tools so Claude can speak in friendly names while tools act on stable identities.
+  - Added scheduled task config, safety policy, CLI/launchd wiring, MCP scheduled-task tools, and read-only report workflows.
+  - Hardened inventory behavior so `apple_inventory` degrades per scope instead of failing entirely when one Apple app errors.
+  - Added argument-aware inventory caching with defensive copies and test cache isolation.
+  - Added per-tool AppleScript timeout plumbing and scan budgets for broad Mail and Reminders queries to reduce live timeouts.
+  - Rebuilt the MCPB artifact for v0.4.0.
+- **Verification:**
+  - Non-live test suite: `296 passed, 8 warnings`.
+- **Blockers:**
+  - Live AppleScript behavior still depends on real app data volume and macOS Automation permissions; installed MCPB needs manual smoke testing after release.
+- **Next steps:**
+  - Install the v0.4.0 MCPB in Claude Desktop.
+  - Test `apple_inventory`, `mail_search`, `reminders_list`, `calendar_list_events`, and `contacts_search` against real data.
+  - If live timeouts remain, add per-app diagnostics that report elapsed time and scope without surfacing private data.
 
 ### Session 4 (2026-06-08, post-release runtime hardening)
 - **What changed:**

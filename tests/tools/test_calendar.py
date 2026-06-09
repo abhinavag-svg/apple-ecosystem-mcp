@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from apple_ecosystem_mcp.preferences import PreferencesStore
 from apple_ecosystem_mcp import server
 from apple_ecosystem_mcp.tools import calendar as cal
 
@@ -80,8 +81,13 @@ def test_list_calendars_returns_shape(monkeypatch):
     result = cal.calendar_list_calendars()
     assert len(result) == 2
     for cal_rec in result:
-        assert set(cal_rec.keys()) == {"name", "uid", "account_name", "writable"}
+        assert {"id", "uid", "name", "kind", "account_name", "path", "writable", "default_candidate"} <= set(
+            cal_rec.keys()
+        )
+        assert cal_rec["kind"] == "calendar"
     assert result[1]["writable"] is False
+    assert result[0]["default_candidate"] is True
+    assert result[1]["default_candidate"] is False
 
 
 def test_list_calendars_propagates_runtime_error(monkeypatch):
@@ -276,28 +282,85 @@ def test_create_event_rejects_non_writable_calendar(monkeypatch):
         [{"name": "Holidays", "uid": "ro", "account_name": "Sub", "writable": False}]
     )
     # Sequence: list_calendars (for _require_writable_uid) — create must never happen.
-    _mk_run(monkeypatch, [calendars_payload])
-    with pytest.raises(RuntimeError, match="not writable"):
-        cal.calendar_create_event(
-            "X",
-            "2026-04-22T09:00:00",
-            "2026-04-22T10:00:00",
-            calendar_uid="ro",
-        )
+    run_mock = _mk_run(monkeypatch, [calendars_payload])
+    out = cal.calendar_create_event(
+        "X",
+        "2026-04-22T09:00:00",
+        "2026-04-22T10:00:00",
+        calendar_uid="ro",
+    )
+    assert out["error"] == "target_read_only"
+    assert out["target"]["id"] == "ro"
+    assert run_mock.call_count == 1
 
 
 def test_create_event_unknown_calendar(monkeypatch):
     calendars_payload = json.dumps(
         [{"name": "Work", "uid": "w", "account_name": "iCloud", "writable": True}]
     )
-    _mk_run(monkeypatch, [calendars_payload])
-    with pytest.raises(RuntimeError, match="not found"):
-        cal.calendar_create_event(
-            "X",
-            "2026-04-22T09:00:00",
-            "2026-04-22T10:00:00",
-            calendar_uid="does-not-exist",
-        )
+    run_mock = _mk_run(monkeypatch, [calendars_payload])
+    out = cal.calendar_create_event(
+        "X",
+        "2026-04-22T09:00:00",
+        "2026-04-22T10:00:00",
+        calendar_uid="does-not-exist",
+    )
+    assert out["error"] == "target_not_found"
+    assert run_mock.call_count == 1
+
+
+def test_create_event_resolves_friendly_calendar_name(monkeypatch):
+    calendars_payload = json.dumps(
+        [{"name": "Work", "uid": "cal-work", "account_name": "iCloud", "writable": True}]
+    )
+    run_mock = _mk_run(monkeypatch, [calendars_payload, json.dumps({"uid": "ev-new"})])
+    out = cal.calendar_create_event(
+        "Review",
+        "2026-04-22T09:00:00",
+        "2026-04-22T10:00:00",
+        calendar_uid="Work",
+    )
+    assert out == {"uid": "ev-new", "success": True}
+    assert run_mock.call_args.args[1] == "cal-work"
+
+
+def test_create_event_returns_structured_ambiguous_calendar_error(monkeypatch):
+    calendars_payload = json.dumps(
+        [
+            {"name": "Work", "uid": "cal-1", "account_name": "Primary", "writable": True},
+            {"name": "Work", "uid": "cal-2", "account_name": "Shared", "writable": True},
+        ]
+    )
+    run_mock = _mk_run(monkeypatch, [calendars_payload])
+    out = cal.calendar_create_event(
+        "Review",
+        "2026-04-22T09:00:00",
+        "2026-04-22T10:00:00",
+        calendar_uid="Work",
+    )
+    assert out["error"] == "target_ambiguous"
+    assert len(out["candidates"]) == 2
+    assert run_mock.call_count == 1
+
+
+def test_create_event_uses_preference_default_calendar(monkeypatch, tmp_path):
+    store = PreferencesStore(tmp_path / "preferences.json")
+    store.set_default(
+        "calendar",
+        {"id": "cal-home", "name": "Home", "kind": "calendar", "account_name": "iCloud"},
+    )
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_CONFIG_DIR", str(tmp_path))
+    calendars_payload = json.dumps(
+        [{"name": "Home", "uid": "cal-home", "account_name": "iCloud", "writable": True}]
+    )
+    run_mock = _mk_run(monkeypatch, [calendars_payload, json.dumps({"uid": "ev-new"})])
+    out = cal.calendar_create_event(
+        "Review",
+        "2026-04-22T09:00:00",
+        "2026-04-22T10:00:00",
+    )
+    assert out == {"uid": "ev-new", "success": True}
+    assert run_mock.call_args.args[1] == "cal-home"
 
 
 def test_create_event_rejects_bad_iso(monkeypatch):

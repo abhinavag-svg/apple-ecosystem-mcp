@@ -6,7 +6,9 @@ from typing import Any
 
 from mcp.types import ToolAnnotations
 
-from ..bridge import run_applescript
+from ..bridge import run_applescript, cache_inventory
+from ..preferences import PreferencesStore
+from ..resolver import ResolverError, resolve_target
 from ..server import mcp
 
 _PERMISSION_DENIED_SENTINEL = "__APPLE_ECOSYSTEM_MCP_REMINDERS_PERMISSION_DENIED__"
@@ -26,9 +28,9 @@ def _is_permission_error_message(message: str) -> bool:
     )
 
 
-def _run_reminders_script(script: str, args: tuple[str, ...] = ()) -> str:
+def _run_reminders_script(script: str, args: tuple[str, ...] = (), *, timeout: int = 35) -> str:
     try:
-        raw = run_applescript(script, *args)
+        raw = run_applescript(script, *args, timeout=timeout)
     except RuntimeError as e:
         if _is_permission_error_message(str(e)):
             raise RuntimeError(_PERMISSION_DENIED_MESSAGE) from e
@@ -58,6 +60,14 @@ def _normalize_due_iso(due: str) -> str:
         dt = dt.astimezone().replace(tzinfo=None)
     # AppleScript parser expects seconds.
     return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _nn(value):
+    if value is None:
+        return None
+    if isinstance(value, str) and (value == "" or value == "missing value"):
+        return None
+    return value
 
 
 _PERMISSION_HELPERS = r"""
@@ -141,9 +151,11 @@ on run argv
     set list_name to item 2 of argv
     set completed_flag to item 3 of argv
     set lim to (item 4 of argv) as integer
+    set scan_lim to (item 5 of argv) as integer
     set want_completed to (completed_flag is "true")
     set rows to {}
     set count_ to 0
+    set scanned_ to 0
     try
         tell application "Reminders"
             if list_id is "" and list_name is "" then
@@ -174,6 +186,8 @@ on run argv
             end if
             repeat with r in target_reminders
                 if count_ ≥ lim then exit repeat
+                if scanned_ ≥ scan_lim then exit repeat
+                set scanned_ to scanned_ + 1
                 set is_done to completed of r
                 if (want_completed and is_done) or ((not want_completed) and (not is_done)) then
                     set count_ to count_ + 1
@@ -198,19 +212,7 @@ on run argv
                         set rlist_id to id of container of r
                     end try
                     set rrecur to ""
-                    try
-                        set rrecur to recurrence of r
-                    end try
                     set rtags to {}
-                    try
-                        repeat with t in tags of r
-                            try
-                                set end of rtags to name of t
-                            on error
-                                set end of rtags to t as string
-                            end try
-                        end repeat
-                    end try
                     set end of rows to {rid, rtitle, rnotes, rdue, rprio, rlist, rlist_id, is_done, rrecur, rtags}
                 end if
             end repeat
@@ -398,6 +400,7 @@ end run
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Reminder Lists", readOnlyHint=True))
+@cache_inventory("reminders_lists", ttl=30)
 def reminders_lists(include_metadata: bool = False) -> list[Any]:
     """List reminder lists.
 
@@ -423,7 +426,20 @@ def reminders_lists(include_metadata: bool = False) -> list[Any]:
                 lists.append({"id": None, "name": str(name)})
 
     if include_metadata:
-        return lists
+        normalized: list[dict] = []
+        for idx, item in enumerate(lists):
+            normalized.append(
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "kind": "reminder_list",
+                    "account_name": None,
+                    "path": None,
+                    "writable": None,
+                    "default_candidate": idx == 0,
+                }
+            )
+        return normalized
     return [item["name"] for item in lists]
 
 
@@ -448,6 +464,7 @@ def reminders_list(
             "hint": "Call reminders_list again with list_name=<name> from the list above",
         }
     capped = max(1, min(int(limit), 100))
+    scan_limit = max(capped, min(capped * 5, 100))
     raw = _run_reminders_script(
         _LIST_SCRIPT,
         (
@@ -455,6 +472,7 @@ def reminders_list(
             list_name or "",
             "true" if completed else "false",
             str(capped),
+            str(scan_limit),
         ),
     )
     try:
@@ -491,15 +509,26 @@ def reminders_create(
     reminders_list_id: str | None = None,
 ) -> dict:
     """Create a reminder."""
-    if list_name and not reminders_list_id:
+    preferences = PreferencesStore()
+    should_use_default = (
+        list_name is None
+        and reminders_list_id is None
+        and preferences.get_default("reminder_list") is not None
+    )
+    if list_name is not None or reminders_list_id is not None or should_use_default:
+        query = reminders_list_id or list_name
         try:
-            known = reminders_lists()
-        except RuntimeError:
-            known = []
-        if known and list_name not in known:
-            raise RuntimeError(
-                f"Unknown Reminders list: {list_name}. Call reminders_lists() to view available lists."
+            resolved = resolve_target(
+                query,
+                reminders_lists(include_metadata=True),
+                scope="reminder_list",
+                preferences=preferences,
+                use_default=should_use_default,
             )
+        except ResolverError as exc:
+            return exc.to_dict()
+        reminders_list_id = _nn(resolved.item.get("id"))
+        list_name = _nn(resolved.item.get("name"))
 
     due_str = ""
     if due:

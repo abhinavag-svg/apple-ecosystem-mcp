@@ -85,6 +85,9 @@ class TestIcloudList:
             assert any(item["name"] == "folder1" for item in result)
             assert any(item["is_dir"] is False for item in result)
             assert any(item["is_dir"] is True for item in result)
+            assert all("kind" in item for item in result)
+            assert all("default_candidate" in item for item in result)
+            assert any(item["default_candidate"] is True for item in result if item["is_dir"])
 
     def test_icloud_list_includes_metadata(self, tmp_path):
         """Listed items include size, modified time, and path."""
@@ -99,6 +102,11 @@ class TestIcloudList:
             assert "size" in item
             assert "modified" in item
             assert "is_dir" in item
+            assert "id" in item
+            assert "kind" in item
+            assert "account_name" in item
+            assert "writable" in item
+            assert "default_candidate" in item
             assert item["size"] == len(b"content")
 
     def test_icloud_list_nested_directory(self, tmp_path):

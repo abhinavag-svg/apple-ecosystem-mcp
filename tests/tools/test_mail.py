@@ -57,14 +57,19 @@ def test_mail_delete_destructive_annotation():
 
 def test_mail_list_mailboxes_returns_shape(monkeypatch):
     payload = [
-        {"name": "INBOX", "id": "1A", "account_name": "iCloud", "path": "INBOX"},
-        {"name": "Sent", "id": "2B", "account_name": "iCloud", "path": "Sent"},
+        {"name": "INBOX", "id": "1A", "account_name": "iCloud", "path": "INBOX", "writable": True},
+        {"name": "Sent", "id": "2B", "account_name": "iCloud", "path": "Sent", "writable": False},
     ]
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_list_mailboxes()
-    assert result == payload
+    assert len(result) == 2
     for mb in result:
-        assert set(mb.keys()) == {"name", "id", "account_name", "path"}
+        assert {"id", "name", "kind", "account_name", "path", "writable", "default_candidate"} <= set(mb.keys())
+        assert mb["kind"] == "mailbox"
+    assert result[0]["default_candidate"] is True
+    assert result[1]["default_candidate"] is False
+    assert result[0]["writable"] is True
+    assert result[1]["writable"] is False
 
 
 def test_mail_list_mailboxes_handles_empty(monkeypatch):
@@ -106,8 +111,11 @@ def test_mail_search_default_and_argv(monkeypatch):
     result = mail.mail_search("invoice")
     assert len(result) == 3
     args = run_mock.call_args.args
-    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_subject, search_sender, to_addr, cc_addr
-    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "1", "0", "", "")
+    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged,
+    # has_attachments, account_name, search_body, before, mailbox_ids_count,
+    # search_subject, search_sender, to_addr, cc_addr, max_scan_total
+    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800")
+    assert run_mock.call_args.kwargs["timeout"] == 35
 
 
 def test_mail_search_forwards_mailbox_id_and_since(monkeypatch):
@@ -115,8 +123,10 @@ def test_mail_search_forwards_mailbox_id_and_since(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     mail.mail_search("q", mailbox_id="mb-7", since="2026-04-01T00:00:00", limit=10)
     args = run_mock.call_args.args
-    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged, has_attachments, account_name, search_body, before, mailbox_ids_count, search_subject, search_sender, to_addr, cc_addr
-    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "1", "0", "", "")
+    # argv: query, mailbox_id, since, limit, from_addr, unread, flagged,
+    # has_attachments, account_name, search_body, before, mailbox_ids_count,
+    # search_subject, search_sender, to_addr, cc_addr, max_scan_total
+    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800")
 
 
 def test_mail_search_caps_at_100(monkeypatch):
@@ -144,6 +154,7 @@ def test_mail_search_script_does_not_read_body_for_preview():
 def test_mail_search_script_uses_tighter_scan_caps():
     assert "if scanLim > 250 then set scanLim to 250" in mail._SEARCH_SCRIPT
     assert "if scanLim > 500 then set scanLim to 500" in mail._SEARCH_SCRIPT
+    assert "if scannedTotal ≥ maxScanTotal then exit repeat" in mail._SEARCH_SCRIPT
 
 
 def test_mail_search_returns_all_required_fields(monkeypatch):
@@ -188,7 +199,22 @@ def test_mail_search_id_always_present(monkeypatch):
 
 
 def test_mail_move_accepts_rfc_id(monkeypatch):
-    run_mock = Mock(return_value=json.dumps({"success": True}))
+    run_mock = Mock(
+        side_effect=[
+            json.dumps(
+                [
+                    {
+                        "name": "Archive",
+                        "id": "mb-archive",
+                        "account_name": "iCloud",
+                        "path": "Archive",
+                        "writable": True,
+                    }
+                ]
+            ),
+            json.dumps({"success": True}),
+        ]
+    )
     monkeypatch.setattr(mail, "run_applescript", run_mock)
 
     rfc_id = "<msg-12345@example.com>"
@@ -457,6 +483,8 @@ def test_mail_list_mailboxes_includes_path(monkeypatch):
     assert len(result) == 1
     assert "path" in result[0]
     assert result[0]["path"] == "Archive"
+    assert result[0]["kind"] == "mailbox"
+    assert result[0]["default_candidate"] is False
 
 
 def test_mail_list_mailboxes_nested_path(monkeypatch):
@@ -741,7 +769,22 @@ def test_mail_create_draft_requires_recipient():
 
 
 def test_mail_move_message_targets_by_id(monkeypatch):
-    run_mock = Mock(return_value=json.dumps({"success": True}))
+    run_mock = Mock(
+        side_effect=[
+            json.dumps(
+                [
+                    {
+                        "name": "Archive",
+                        "id": "mb-archive",
+                        "account_name": "iCloud",
+                        "path": "Archive",
+                        "writable": True,
+                    }
+                ]
+            ),
+            json.dumps({"success": True}),
+        ]
+    )
     monkeypatch.setattr(mail, "run_applescript", run_mock)
 
     result = mail.mail_move_message("<m@x>", "mb-archive")
@@ -750,6 +793,78 @@ def test_mail_move_message_targets_by_id(monkeypatch):
     assert result["mailbox_id"] == "mb-archive"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>", "mb-archive")
+
+
+def test_mail_move_message_resolves_friendly_mailbox_name(monkeypatch):
+    run_mock = Mock(
+        side_effect=[
+            json.dumps(
+                [
+                    {
+                        "name": "Archive",
+                        "id": "mb-archive",
+                        "account_name": "iCloud",
+                        "path": "Archive",
+                        "writable": True,
+                    }
+                ]
+            ),
+            json.dumps({"success": True}),
+        ]
+    )
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    result = mail.mail_move_message("<m@x>", "Archive")
+    assert result["success"] is True
+    assert result["mailbox_id"] == "mb-archive"
+    assert run_mock.call_args.args[1:] == ("<m@x>", "mb-archive")
+
+
+def test_mail_move_message_returns_structured_ambiguous_mailbox_error(monkeypatch):
+    run_mock = Mock(
+        return_value=json.dumps(
+            [
+                {
+                    "name": "Archive",
+                    "id": "mb-1",
+                    "account_name": "iCloud",
+                    "path": "Archive",
+                    "writable": True,
+                },
+                {
+                    "name": "Archive",
+                    "id": "mb-2",
+                    "account_name": "Work",
+                    "path": "Archive",
+                    "writable": True,
+                },
+            ]
+        )
+    )
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    result = mail.mail_move_message("<m@x>", "Archive")
+    assert result["error"] == "target_ambiguous"
+    assert len(result["candidates"]) == 2
+    assert run_mock.call_count == 1
+
+
+def test_mail_move_message_returns_structured_read_only_mailbox_error(monkeypatch):
+    run_mock = Mock(
+        return_value=json.dumps(
+            [
+                {
+                    "name": "Archive",
+                    "id": "mb-archive",
+                    "account_name": "iCloud",
+                    "path": "Archive",
+                    "writable": False,
+                }
+            ]
+        )
+    )
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    result = mail.mail_move_message("<m@x>", "Archive")
+    assert result["error"] == "target_read_only"
+    assert result["target"]["id"] == "mb-archive"
 
 
 def test_mail_move_script_name_fallback_defines_mailbox_name():

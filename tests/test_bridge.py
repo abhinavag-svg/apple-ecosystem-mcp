@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from apple_ecosystem_mcp.bridge import as_quote, run_applescript
+from apple_ecosystem_mcp.bridge import as_quote, cache_inventory, clear_inventory_cache, run_applescript
 
 
 def test_run_applescript_returns_stdout(mock_osascript):
@@ -44,6 +44,14 @@ def test_run_applescript_calls_osascript_with_argv(mock_osascript):
     assert run_mock.call_args.kwargs["text"] is True
     assert run_mock.call_args.kwargs["timeout"] == 60
     assert run_mock.call_args.kwargs["check"] is False
+
+
+def test_run_applescript_accepts_custom_timeout(mock_osascript):
+    run_mock = mock_osascript(stdout="ok\n")
+
+    assert run_applescript("return 1", timeout=12) == "ok"
+
+    assert run_mock.call_args.kwargs["timeout"] == 12
 
 
 def test_run_applescript_lock_serializes_concurrent_calls(monkeypatch):
@@ -93,3 +101,20 @@ def test_as_quote_escapes_backslashes_and_quotes():
     expr = as_quote('a\\b"c')
     assert "\\\\" in expr
     assert '" & quote & "' in expr
+
+
+def test_cache_inventory_uses_arguments_and_returns_defensive_copies():
+    clear_inventory_cache()
+    calls: list[tuple[bool]] = []
+
+    @cache_inventory("example", ttl=30)
+    def load(include_metadata: bool = False):
+        calls.append((include_metadata,))
+        return [{"metadata": include_metadata}]
+
+    first = load()
+    first[0]["metadata"] = "mutated"
+
+    assert load() == [{"metadata": False}]
+    assert load(include_metadata=True) == [{"metadata": True}]
+    assert calls == [(False,), (True,)]

@@ -24,6 +24,18 @@ def test_importing_server_registers_all_tool_modules():
     assert "contacts_search" in tools
     assert "reminders_lists" in tools
     assert "icloud_list" in tools
+    assert "apple_inventory" in tools
+    assert "apple_preferences_get" in tools
+    assert "apple_preferences_set_default" in tools
+    assert "apple_preferences_add_alias" in tools
+    assert "apple_preferences_remove_alias" in tools
+    assert "apple_resolve_target" in tools
+    assert "scheduled_tasks_list" in tools
+    assert "scheduled_tasks_get" in tools
+    assert "scheduled_tasks_create" in tools
+    assert "scheduled_tasks_run" in tools
+    assert "scheduled_tasks_enable" in tools
+    assert "scheduled_tasks_disable" in tools
 
 
 def test_hello_apple_is_registered_and_delegates(monkeypatch):
@@ -43,6 +55,12 @@ def test_readonly_and_destructive_annotations_present():
     assert tools["mail_search"].annotations.readOnlyHint is True
     assert tools["icloud_delete"].annotations.destructiveHint is True
     assert tools["calendar_delete_event"].annotations.destructiveHint is True
+    assert tools["apple_inventory"].annotations.readOnlyHint is True
+    assert tools["apple_preferences_get"].annotations.readOnlyHint is True
+    assert tools["apple_resolve_target"].annotations.readOnlyHint is True
+    assert tools["apple_preferences_remove_alias"].annotations.destructiveHint is True
+    assert tools["scheduled_tasks_list"].annotations.readOnlyHint is True
+    assert tools["scheduled_tasks_get"].annotations.readOnlyHint is True
 
 
 def test_no_tool_definitions_use_varargs_or_kwargs():
@@ -53,6 +71,8 @@ def test_no_tool_definitions_use_varargs_or_kwargs():
         tools_dir / "contacts.py",
         tools_dir / "reminders.py",
         tools_dir / "icloud.py",
+        tools_dir / "preferences.py",
+        tools_dir / "scheduled_tasks.py",
     ]:
         module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in module.body:

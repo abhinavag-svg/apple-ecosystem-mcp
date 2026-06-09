@@ -689,11 +689,30 @@ def contacts_update(
 
 
 @mcp.tool(annotations=ToolAnnotations(title="List Contact Groups", readOnlyHint=True))
-def contacts_list_groups() -> list[str]:
-    """List contact groups."""
+def contacts_list_groups(include_metadata: bool = False) -> list[str] | list[dict]:
+    """List contact groups.
+
+    By default this preserves the legacy list-of-names response. Set
+    include_metadata=True to receive stable group identifiers and discovery
+    metadata.
+    """
     raw = run_applescript(_GROUPS_SCRIPT)
     try:
         parsed = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
         raise RuntimeError("Failed to parse Contacts groups response") from e
-    return [str(n) for n in parsed if _nn(n)]
+    names = [str(n) for n in parsed if _nn(n)]
+    if not include_metadata:
+        return names
+    return [
+        {
+            "id": name,
+            "name": name,
+            "kind": "contact_group",
+            "account_name": None,
+            "path": None,
+            "writable": None,
+            "default_candidate": idx == 0,
+        }
+        for idx, name in enumerate(names)
+    ]
