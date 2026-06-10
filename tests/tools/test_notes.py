@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import gzip
 import json
+import sqlite3
 from unittest.mock import Mock
 
 import pytest
@@ -13,6 +15,55 @@ def _patch_run(monkeypatch, return_value):
     mock = Mock(return_value=return_value)
     monkeypatch.setattr(notes, "run_applescript", mock)
     return mock
+
+
+def _varint(value: int) -> bytes:
+    out = bytearray()
+    while value >= 0x80:
+        out.append((value & 0x7F) | 0x80)
+        value >>= 7
+    out.append(value)
+    return bytes(out)
+
+
+def _field_bytes(field: int, value: bytes) -> bytes:
+    return _varint((field << 3) | 2) + _varint(len(value)) + value
+
+
+def _create_notes_store(path, *, title: str = "Tuscany Itinerary", text: str = "Plain itinerary text") -> None:
+    conn = sqlite3.connect(path)
+    try:
+        conn.executescript(
+            """
+            create table ZICCLOUDSYNCINGOBJECT (
+                Z_PK integer primary key,
+                ZMARKEDFORDELETION integer,
+                ZIDENTIFIER varchar,
+                ZTITLE1 varchar,
+                ZMODIFICATIONDATE1 timestamp,
+                ZCREATIONDATE1 timestamp,
+                ZNOTEDATA integer
+            );
+            create table ZICNOTEDATA (
+                Z_PK integer primary key,
+                ZDATA blob
+            );
+            """
+        )
+        blob = gzip.compress(_field_bytes(1, text.encode("utf-8")))
+        conn.execute(
+            """
+            insert into ZICCLOUDSYNCINGOBJECT(
+                Z_PK, ZMARKEDFORDELETION, ZIDENTIFIER, ZTITLE1,
+                ZMODIFICATIONDATE1, ZCREATIONDATE1, ZNOTEDATA
+            ) values (162, 0, 'note-uuid', ?, 492632690, 492632000, 12)
+            """,
+            (title,),
+        )
+        conn.execute("insert into ZICNOTEDATA(Z_PK, ZDATA) values (12, ?)", (blob,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _tools_map():
@@ -69,11 +120,89 @@ def test_notes_read_requires_target():
 
 
 def test_notes_read_returns_body_and_plain_text(monkeypatch):
-    payload = json.dumps({"id": "N1", "title": "Project", "body": "<p>Hello</p>", "account": "iCloud"})
+    payload = json.dumps(
+        {
+            "id": "N1",
+            "title": "Project",
+            "body": "Hello",
+            "text": "Hello",
+            "body_format": "plain_text",
+            "account": "iCloud",
+            "folder": "Notes",
+        }
+    )
     _patch_run(monkeypatch, payload)
     result = notes.notes_read(note_id="N1")
-    assert result["body"] == "<p>Hello</p>"
+    assert result["body"] == "Hello"
     assert result["text"] == "Hello"
+    assert result["body_format"] == "plain_text"
+    assert result["folder"] == "Notes"
+
+
+def test_notes_read_uses_store_only_after_applescript_failure(monkeypatch, tmp_path):
+    store_path = tmp_path / "NoteStore.sqlite"
+    _create_notes_store(store_path, text="Tuscany Itinerary\n\nReadable plain text")
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_NOTES_STORE", str(store_path))
+    run_mock = Mock(side_effect=RuntimeError("AppleScript timed out"))
+    monkeypatch.setattr(notes, "run_applescript", run_mock)
+
+    result = notes.notes_read(title="Tuscany Itinerary")
+
+    assert result["id"] == "note-uuid"
+    assert result["title"] == "Tuscany Itinerary"
+    assert result["body"] == "Tuscany Itinerary\n\nReadable plain text"
+    assert result["text"] == result["body"]
+    assert result["body_format"] == "plain_text"
+    run_mock.assert_called_once()
+
+
+def test_notes_read_store_accepts_stable_coredata_id(monkeypatch, tmp_path):
+    store_path = tmp_path / "NoteStore.sqlite"
+    _create_notes_store(store_path, title="Rome", text="Rome text")
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_NOTES_STORE", str(store_path))
+
+    result = notes.notes_read(note_id="x-coredata://ABC/ICNote/p162")
+
+    assert result["title"] == "Rome"
+    assert result["text"] == "Rome text"
+
+
+def test_notes_read_does_not_fallback_to_store_before_applescript(monkeypatch):
+    store_mock = Mock(return_value={"id": "store-note"})
+    monkeypatch.setattr(notes, "_read_note_from_store", store_mock)
+    _patch_run(monkeypatch, json.dumps({"id": "N1", "title": "Rome", "body": "Rome", "text": "Rome"}))
+
+    result = notes.notes_read(title="Rome")
+
+    assert result["id"] == "N1"
+    store_mock.assert_not_called()
+
+
+def test_notes_read_script_does_not_use_unsupported_plaintext_property():
+    read_section = notes._READ_SCRIPT
+    assert "plaintext of n" not in read_section
+    assert "return my _note_row_plain_text(n, folderName, accountName)" in read_section
+    assert "«class text» of n" in notes._JSON_HELPERS
+
+
+def test_notes_list_script_skips_content_read_for_empty_query():
+    assert 'if queryText is "" then' in notes._LIST_SCRIPT
+    assert "set matchesQuery to true" in notes._LIST_SCRIPT
+
+
+def test_notes_normalize_truncates_large_plain_text():
+    result = notes._normalize_note(
+        {
+            "id": "N1",
+            "title": "Large",
+            "text": "x" * (notes._NOTE_TEXT_MAX_CHARS + 10),
+            "body_format": "plain_text",
+        }
+    )
+
+    assert len(result["text"]) == notes._NOTE_TEXT_MAX_CHARS + 3
+    assert result["text"].endswith("...")
+    assert result["body"] == result["text"]
 
 
 def test_notes_create_returns_success(monkeypatch):

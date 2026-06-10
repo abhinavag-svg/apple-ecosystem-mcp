@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from typing import Any
 
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
+from ..mail_store import MailSearchQuery, MailStoreUnavailable, search_mail_store
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -16,6 +18,9 @@ _MAIL_SEARCH_DEFAULT = 20
 _MAIL_SEARCH_MAX = 100
 _MAIL_BODY_MAX_CHARS = 8_000
 _MAIL_PREVIEW_CHARS = 200
+_MAIL_PROVIDER_AUTO = "auto"
+_MAIL_PROVIDER_LOCAL = "local"
+_MAIL_PROVIDER_APPLESCRIPT = "applescript"
 
 
 def _parse_json(raw: str) -> Any:
@@ -50,6 +55,86 @@ def _normalize_optional_bool(value: Any) -> bool | None:
         if lowered == "false":
             return False
     return bool(value)
+
+
+def _mail_provider_mode(filters: dict) -> str:
+    value = filters.get("provider")
+    if value is None:
+        value = filters.get("mail_provider")
+    if value is None:
+        value = os.environ.get("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", _MAIL_PROVIDER_AUTO)
+    mode = str(value).strip().lower()
+    if mode in {"store", "sqlite", "native", "local"}:
+        return _MAIL_PROVIDER_LOCAL
+    if mode in {"legacy", "script", "applescript"}:
+        return _MAIL_PROVIDER_APPLESCRIPT
+    return _MAIL_PROVIDER_AUTO
+
+
+def _can_search_mail_store(
+    query: str,
+    search_fields: list[str],
+    filters: dict,
+    *,
+    since: str | None,
+    before: str | None,
+    mailbox_id: str | None,
+) -> bool:
+    if "body" in search_fields:
+        return False
+    if filters.get("account_name"):
+        return False
+    supported_filters = {
+        "from_addr",
+        "to_addr",
+        "cc_addr",
+        "unread",
+        "flagged",
+        "has_attachments",
+        "mailbox_ids",
+        "provider",
+        "mail_provider",
+    }
+    if any(key not in supported_filters for key in filters):
+        return False
+    effective_filters = [key for key in filters if key not in {"provider", "mail_provider"}]
+    return bool(query or effective_filters or since or before or mailbox_id)
+
+
+def _search_with_mail_store(
+    *,
+    query: str,
+    mailbox_id: str | None,
+    limit: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str],
+    filters: dict,
+) -> list[dict[str, Any]]:
+    mailbox_ids = filters.get("mailbox_ids") or []
+    if not isinstance(mailbox_ids, list):
+        mailbox_ids = []
+    search = MailSearchQuery(
+        query=query,
+        limit=limit,
+        since=since,
+        before=before,
+        mailbox_id=mailbox_id,
+        mailbox_ids=tuple(str(item) for item in mailbox_ids),
+        search_subject="subject" in search_fields,
+        search_sender="sender" in search_fields,
+        unread=filters.get("unread") if isinstance(filters.get("unread"), bool) else None,
+        flagged=filters.get("flagged") if isinstance(filters.get("flagged"), bool) else None,
+        has_attachments=(
+            filters.get("has_attachments")
+            if isinstance(filters.get("has_attachments"), bool)
+            else None
+        ),
+        from_addr=filters.get("from_addr") or None,
+        to_addr=filters.get("to_addr") or None,
+        cc_addr=filters.get("cc_addr") or None,
+    )
+    return search_mail_store(search)
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -551,8 +636,32 @@ def mail_search(
     filters = filters or {}
     search_fields = search_fields or ["subject"]
 
-    # Build args list for AppleScript
     search_fields = [field.lower() for field in search_fields]
+    provider_mode = _mail_provider_mode(filters)
+    if provider_mode != _MAIL_PROVIDER_APPLESCRIPT and _can_search_mail_store(
+        query,
+        search_fields,
+        filters,
+        since=since,
+        before=before,
+        mailbox_id=mailbox_id,
+    ):
+        try:
+            data = _search_with_mail_store(
+                query=query,
+                mailbox_id=mailbox_id,
+                limit=capped,
+                since=since,
+                before=before,
+                search_fields=search_fields,
+                filters=filters,
+            )
+            return data[:capped]
+        except MailStoreUnavailable as exc:
+            if provider_mode == _MAIL_PROVIDER_LOCAL:
+                return [exc.to_dict()]
+
+    # Build args list for AppleScript
     args = [
         query,
         mailbox_id or "",

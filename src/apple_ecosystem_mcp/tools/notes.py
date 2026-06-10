@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import gzip
 import json
+import os
 import re
+import sqlite3
 from html import unescape
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
 
@@ -12,6 +17,8 @@ from ..server import mcp
 
 _LIST_LIMIT_DEFAULT = 50
 _LIST_LIMIT_MAX = 200
+_NOTE_TEXT_MAX_CHARS = 20_000
+_APPLE_REFERENCE_OFFSET = 978_307_200
 
 
 def _parse_json(raw: str) -> Any:
@@ -33,7 +40,7 @@ def _limit(value: int, maximum: int = _LIST_LIMIT_MAX) -> int:
     return max(1, min(int(value), maximum))
 
 
-def _plain_text(value: str | None, max_chars: int = 4000) -> str | None:
+def _plain_text(value: str | None, max_chars: int = _NOTE_TEXT_MAX_CHARS) -> str | None:
     if value is None:
         return None
     text = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
@@ -48,11 +55,18 @@ def _plain_text(value: str | None, max_chars: int = 4000) -> str | None:
 
 def _normalize_note(row: dict) -> dict:
     body = _nn(row.get("body"))
+    text = _nn(row.get("text"))
+    if text is None:
+        text = _plain_text(body)
+    elif isinstance(text, str) and len(text) > _NOTE_TEXT_MAX_CHARS:
+        text = text[:_NOTE_TEXT_MAX_CHARS] + "..."
+    body_format = _nn(row.get("body_format")) or "plain_text"
     return {
         "id": _nn(row.get("id")),
         "title": _nn(row.get("title")),
-        "body": body,
-        "text": _plain_text(body),
+        "body": text if body_format == "plain_text" else body,
+        "text": text,
+        "body_format": body_format,
         "account": _nn(row.get("account")),
         "folder": _nn(row.get("folder")),
         "created": _nn(row.get("created")),
@@ -67,6 +81,190 @@ def _normalize_note_summary(row: dict) -> dict:
     note.pop("body", None)
     note.pop("text", None)
     return note
+
+
+def _notes_store_path() -> Path:
+    override = os.environ.get("APPLE_ECOSYSTEM_MCP_NOTES_STORE")
+    if override:
+        return Path(override).expanduser()
+    return Path.home() / "Library" / "Group Containers" / "group.com.apple.notes" / "NoteStore.sqlite"
+
+
+def _read_note_from_store(
+    *,
+    title: str | None,
+    note_id: str | None,
+    account: str | None,
+) -> dict | None:
+    if account:
+        return None
+    path = _notes_store_path()
+    if not path.exists():
+        return None
+
+    try:
+        db_uri = f"file:{quote(str(path), safe='/')}?mode=ro"
+        conn = sqlite3.connect(db_uri, uri=True)
+    except sqlite3.Error:
+        return None
+
+    try:
+        conn.row_factory = sqlite3.Row
+        where = ["n.ZMARKEDFORDELETION = 0"]
+        params: list[Any] = []
+        pk = _note_pk_from_id(note_id)
+        if pk is not None:
+            where.append("n.Z_PK = ?")
+            params.append(pk)
+        elif note_id:
+            where.append("n.ZIDENTIFIER = ?")
+            params.append(note_id)
+        elif title:
+            where.append("lower(n.ZTITLE1) = lower(?)")
+            params.append(title)
+        else:
+            return None
+
+        sql = f"""
+            select
+                n.Z_PK as id,
+                n.ZIDENTIFIER as identifier,
+                n.ZTITLE1 as title,
+                n.ZMODIFICATIONDATE1 as modified,
+                n.ZCREATIONDATE1 as created,
+                d.ZDATA as data
+            from ZICCLOUDSYNCINGOBJECT n
+            left join ZICNOTEDATA d on d.Z_PK = n.ZNOTEDATA
+            where {" and ".join(where)}
+            order by n.ZMODIFICATIONDATE1 desc
+            limit 1
+        """
+        row = conn.execute(sql, params).fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+    if row is None:
+        return None
+
+    text = _extract_note_text_from_blob(row["data"])
+    if text is None:
+        return None
+    text = _truncate_text(text, _NOTE_TEXT_MAX_CHARS)
+    identifier = row["identifier"] or f"x-coredata://local/ICNote/p{row['id']}"
+    return {
+        "id": identifier,
+        "title": _nn(row["title"]),
+        "body": text,
+        "text": text,
+        "body_format": "plain_text",
+        "account": None,
+        "folder": None,
+        "created": _format_apple_reference_date(row["created"]),
+        "modified": _format_apple_reference_date(row["modified"]),
+    }
+
+
+def _note_pk_from_id(note_id: str | None) -> int | None:
+    if not note_id:
+        return None
+    match = re.search(r"/p(\d+)\b", note_id)
+    if match:
+        return int(match.group(1))
+    if note_id.isdigit():
+        return int(note_id)
+    return None
+
+
+def _extract_note_text_from_blob(blob: bytes | None) -> str | None:
+    if not blob:
+        return None
+    try:
+        data = gzip.decompress(blob)
+    except (OSError, EOFError):
+        data = blob
+    candidates = _protobuf_text_candidates(data)
+    if not candidates:
+        return None
+    return max(candidates, key=len).strip() or None
+
+
+def _protobuf_text_candidates(data: bytes, *, depth: int = 0) -> list[str]:
+    candidates: list[str] = []
+    i = 0
+    while i < len(data):
+        key, i = _read_varint(data, i)
+        if key is None:
+            break
+        wire_type = key & 7
+        if wire_type == 0:
+            _, i = _read_varint(data, i)
+            if i < 0:
+                break
+        elif wire_type == 1:
+            i += 8
+        elif wire_type == 5:
+            i += 4
+        elif wire_type == 2:
+            length, i = _read_varint(data, i)
+            if length is None or i + length > len(data):
+                break
+            value = data[i : i + length]
+            i += length
+            text = _decode_printable_text(value)
+            if text is not None:
+                candidates.append(text)
+            if depth < 4 and len(value) > 2:
+                candidates.extend(_protobuf_text_candidates(value, depth=depth + 1))
+        else:
+            break
+    return candidates
+
+
+def _read_varint(data: bytes, start: int) -> tuple[int | None, int]:
+    result = 0
+    shift = 0
+    i = start
+    while i < len(data) and shift <= 63:
+        byte = data[i]
+        i += 1
+        result |= (byte & 0x7F) << shift
+        if byte < 0x80:
+            return result, i
+        shift += 7
+    return None, -1
+
+
+def _decode_printable_text(value: bytes) -> str | None:
+    try:
+        text = value.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text.strip():
+        return None
+    printable = sum(ch.isprintable() or ch in "\n\r\t" for ch in text)
+    if printable / max(1, len(text)) < 0.95:
+        return None
+    return text
+
+
+def _truncate_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "..."
+
+
+def _format_apple_reference_date(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        timestamp = float(value) + _APPLE_REFERENCE_OFFSET
+    except (TypeError, ValueError):
+        return None
+    from datetime import datetime
+
+    return datetime.fromtimestamp(timestamp).isoformat(timespec="seconds")
 
 
 _JSON_HELPERS = r"""
@@ -140,11 +338,6 @@ on _note_row(n, folderName, accountName, includeBody)
             try
                 set nbody to body of n
             end try
-        else
-            try
-                set nbody to body of n
-                if length of nbody > 600 then set nbody to text 1 thru 600 of nbody
-            end try
         end if
         try
             set cdate to creation date of n
@@ -153,8 +346,34 @@ on _note_row(n, folderName, accountName, includeBody)
             set mdate to modification date of n
         end try
     end tell
-    return "{\"id\":" & my _js(nid) & ",\"title\":" & my _js(ntitle) & ",\"body\":" & my _js(nbody) & ",\"account\":" & my _js(accountName) & ",\"folder\":" & my _js(folderName) & ",\"created\":" & my _iso(cdate) & ",\"modified\":" & my _iso(mdate) & "}"
+    return "{\"id\":" & my _js(nid) & ",\"title\":" & my _js(ntitle) & ",\"body\":" & my _js(nbody) & ",\"body_format\":\"html\",\"account\":" & my _js(accountName) & ",\"folder\":" & my _js(folderName) & ",\"created\":" & my _iso(cdate) & ",\"modified\":" & my _iso(mdate) & "}"
 end _note_row
+
+on _note_row_plain_text(n, folderName, accountName)
+    set nid to ""
+    set ntitle to ""
+    set ntext to ""
+    set cdate to missing value
+    set mdate to missing value
+    tell application "Notes"
+        try
+            set nid to id of n
+        end try
+        try
+            set ntitle to name of n
+        end try
+        try
+            set ntext to («class text» of n) as string
+        end try
+        try
+            set cdate to creation date of n
+        end try
+        try
+            set mdate to modification date of n
+        end try
+    end tell
+    return "{\"id\":" & my _js(nid) & ",\"title\":" & my _js(ntitle) & ",\"body\":" & my _js(ntext) & ",\"text\":" & my _js(ntext) & ",\"body_format\":\"plain_text\",\"account\":" & my _js(accountName) & ",\"folder\":" & my _js(folderName) & ",\"created\":" & my _iso(cdate) & ",\"modified\":" & my _iso(mdate) & "}"
+end _note_row_plain_text
 """
 
 
@@ -228,11 +447,19 @@ on run argv
                             try
                                 set ntitle to name of n
                             end try
-                            set nbody to ""
-                            try
-                                set nbody to body of n
-                            end try
-                            if my _containsCI(ntitle, queryText) or my _containsCI(nbody, queryText) then
+                            set matchesQuery to false
+                            if queryText is "" then
+                                set matchesQuery to true
+                            else if my _containsCI(ntitle, queryText) then
+                                set matchesQuery to true
+                            else
+                                set nbody to ""
+                                try
+                                    set nbody to body of n
+                                end try
+                                if my _containsCI(nbody, queryText) then set matchesQuery to true
+                            end if
+                            if matchesQuery then
                                 set end of rows to my _note_row(n, folderName, accountName, includeBody)
                                 set count_ to count_ + 1
                             end if
@@ -271,7 +498,7 @@ on run argv
                             set ntitle to name of n
                         end try
                         if (targetID is not "" and nid is targetID) or (targetID is "" and my _sameCI(ntitle, targetTitle)) then
-                            return my _note_row(n, folderName, accountName, true)
+                            return my _note_row_plain_text(n, folderName, accountName)
                         end if
                     end repeat
                 end repeat
@@ -429,7 +656,15 @@ def notes_read(
     """Read one note's full content by stable id or title."""
     if not title and not note_id:
         raise RuntimeError("Provide title or note_id")
-    row = _parse_json(run_applescript(_READ_SCRIPT, note_id or "", title or "", account or "", timeout=30))
+    try:
+        row = _parse_json(run_applescript(_READ_SCRIPT, note_id or "", title or "", account or "", timeout=30))
+    except RuntimeError:
+        # AppleScript plain-text read is the canonical path. NoteStore is only
+        # for recovery from large-note timeout/failure cases.
+        store_note = _read_note_from_store(title=title, note_id=note_id, account=account)
+        if store_note is not None:
+            return store_note
+        raise
     if not isinstance(row, dict):
         raise RuntimeError("Note not found")
     return _normalize_note(row)

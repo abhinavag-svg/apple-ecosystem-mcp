@@ -3,11 +3,27 @@
 Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
-- **Last changed:** 2026-06-08
-- **Current version:** v0.4.0 (GitHub MCPB release)
-- **Next TODO:** Re-test installed MCPB in Claude Desktop against real Mail, Calendar, Contacts, and Reminders data. Remaining backlog: `PKG-003`, `TST-001`, `TST-002`, `TST-003`
+- **Last changed:** 2026-06-10
+- **Current version:** v0.6.0 (GitHub MCPB release)
+- **Next TODO:** Live-test the installed v0.6.0 MCPB in Claude Desktop with real Mail and Notes data, then continue the separate Mail rework plan for true chronological inbox queries.
 
 ## Session Log
+
+### Session 6 (2026-06-10, mail metadata provider and Notes reliability release)
+- **What changed:**
+  - Added a local Mail metadata provider backed by Apple Mail's read-only Envelope Index for metadata/date-window searches, with provider selection and degraded-mode fallback behavior.
+  - Added unit coverage for the Mail store path plus provider routing in `mail_search`.
+  - Fixed `notes_read` so Notes plain-text extraction is the canonical read path again, avoiding large rich-note HTML timeouts.
+  - Kept the Apple Notes SQLite `NoteStore` path as a read-only degraded fallback after AppleScript failure/timeout only.
+  - Removed the stale tracked `.claude/worktrees/vibrant-proskuriakova-efe262` gitlink during repo cleanup.
+  - Rebuilt the MCPB artifact for v0.6.0.
+- **Verification:**
+  - Focused non-live tests: `99 passed` via `UV_CACHE_DIR=.uv-cache uv run pytest tests/tools/test_mail.py tests/test_mail_store.py tests/tools/test_notes.py tests/test_server.py -q`
+- **Blockers:**
+  - Mail still does not support a true "received after timestamp" inbox query for message bodies or full-fidelity recency views; that remains separate follow-on work.
+- **Next steps:**
+  - Validate installed behavior against real `notes_read`, `mail_search` date windows, and scheduled workflows that depend on those reads.
+  - Continue the dedicated Mail redesign plan for true chronological and mailbox-first queries.
 
 ### Session 5 (2026-06-08, practical-use, scheduling, and timeout hardening)
 - **What changed:**

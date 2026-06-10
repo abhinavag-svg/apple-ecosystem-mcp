@@ -8,6 +8,11 @@ import pytest
 from apple_ecosystem_mcp.tools import mail
 
 
+@pytest.fixture(autouse=True)
+def _force_applescript_mail_provider(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "applescript")
+
+
 def _inspect_tools(mcp):
     return {tool.name: tool for tool in mcp.local_provider._components.values()}
 
@@ -548,6 +553,86 @@ def test_mail_search_has_attachments_is_boolean(monkeypatch):
     result = mail.mail_search("q")
     assert isinstance(result[0]["has_attachments"], bool)
     assert result[0]["has_attachments"] is False
+
+
+def test_mail_search_uses_local_store_for_metadata_queries(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    store_mock = Mock(
+        return_value=[
+            {
+                "id": "<local@test>",
+                "subject": "Local",
+                "sender": "a@example.com",
+                "date": "2026-05-28T13:30:00",
+                "preview": "",
+                "mailbox_id": "imap://ACCOUNT/Inbox",
+                "account_name": None,
+                "has_attachments": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(mail, "search_mail_store", store_mock)
+
+    result = mail.mail_search("", since="2026-05-28T13:00:00", filters={"unread": True})
+
+    assert result[0]["id"] == "<local@test>"
+    store_query = store_mock.call_args.args[0]
+    assert store_query.query == ""
+    assert store_query.since == "2026-05-28T13:00:00"
+    assert store_query.unread is True
+    run_mock.assert_not_called()
+
+
+def test_mail_search_local_provider_returns_degraded_state(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    def unavailable(_search):
+        raise mail.MailStoreUnavailable("mail_store_unavailable", "No index")
+
+    monkeypatch.setattr(mail, "search_mail_store", unavailable)
+
+    result = mail.mail_search("", since="2026-05-28T13:00:00")
+
+    assert result == [
+        {
+            "error": "mail_store_unavailable",
+            "message": "No index",
+            "recoverable": True,
+            "provider": "mail_store",
+        }
+    ]
+    run_mock.assert_not_called()
+
+
+def test_mail_search_auto_falls_back_to_applescript_when_store_unavailable(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    def unavailable(_search):
+        raise mail.MailStoreUnavailable("mail_store_unavailable", "No index")
+
+    monkeypatch.setattr(mail, "search_mail_store", unavailable)
+
+    assert mail.mail_search("", since="2026-05-28T13:00:00") == []
+    run_mock.assert_called_once()
+
+
+def test_mail_search_body_search_stays_on_applescript(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    store_mock = Mock(return_value=[])
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(mail, "search_mail_store", store_mock)
+
+    assert mail.mail_search("receipt", search_fields=["body"]) == []
+
+    store_mock.assert_not_called()
+    run_mock.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
