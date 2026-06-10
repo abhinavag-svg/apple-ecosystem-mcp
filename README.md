@@ -19,7 +19,7 @@ The project ships primarily as a Claude Desktop `.mcpb` bundle.
 
 These are the kinds of things the connector is built for:
 
-- `Draft an email to Ankita saying we need to plan a date night next week in between the kids' schedule. Check her contact details, look at next week's calendar openings, and help me suggest a couple of realistic evenings.`
+- `Draft an email to Jane J saying we need to plan a meetup night next week in between the kids' schedule. Check her contact details, look at next week's calendar openings, and help me suggest a couple of realistic evenings.`
 - `Find the latest thread with our school, check my calendar for this week, and draft a reply proposing two pickup-call times that do not conflict with anything.`
 - `Look up David Chen in my contacts, find our recent email history, check when I'm free next Thursday, and draft a meeting follow-up with a few time options.`
 - `Review tomorrow's calendar, my overdue reminders, and any unread important mail, then give me a short morning game plan.`
