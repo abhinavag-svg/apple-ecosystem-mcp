@@ -12,14 +12,12 @@ from apple_ecosystem_mcp.permissions import check_permissions
     ("denied_index", "name"),
     [
         (0, "Automation → Mail"),
-        (1, "Automation → Calendar"),
-        (2, "Automation → Contacts"),
-        (3, "Automation → Reminders"),
+        (1, "Automation → Notes"),
     ],
 )
 def test_check_permissions_detects_automation_denial(monkeypatch, capsys, denied_index: int, name: str):
     results: list[CompletedProcess[str]] = []
-    for i in range(4):
+    for i in range(2):
         if i == denied_index:
             results.append(
                 CompletedProcess(
@@ -46,8 +44,6 @@ def test_check_permissions_detects_apple_events_denial_text(monkeypatch, capsys)
     # First probe denied via message, others succeed.
     responses = [
         CompletedProcess(args=["osascript"], returncode=1, stdout="", stderr="Not allowed to send Apple events"),
-        CompletedProcess(args=["osascript"], returncode=0, stdout="ok", stderr=""),
-        CompletedProcess(args=["osascript"], returncode=0, stdout="ok", stderr=""),
         CompletedProcess(args=["osascript"], returncode=0, stdout="ok", stderr=""),
     ]
     it = iter(responses)

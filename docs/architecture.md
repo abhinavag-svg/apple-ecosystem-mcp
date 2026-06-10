@@ -2,7 +2,7 @@
 
 ## Overview
 
-Apple Ecosystem MCP is a local Python MCP server for Claude Desktop. It exposes tools for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive. Calendar, Contacts, and Reminders use a bundled native macOS helper by default; Mail and Notes use AppleScript; iCloud Drive uses local filesystem and Spotlight APIs.
+Apple Ecosystem MCP is a local Python MCP server for Claude Desktop. It exposes tools for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive. Calendar, Contacts, and Reminders use a bundled native macOS helper by default; Mail uses AppleScript plus an optional local metadata provider for supported queries; Notes uses AppleScript with a read-only NoteStore fallback; iCloud Drive uses local filesystem and Spotlight APIs.
 
 ```text
 Claude Desktop
@@ -24,6 +24,7 @@ Mail, Calendar, Contacts, Reminders, Notes, iCloud Drive
 - `src/apple_ecosystem_mcp/server.py` creates the FastMCP server and registers tools.
 - `src/apple_ecosystem_mcp/tools/` contains the app-specific tool modules.
 - `src/apple_ecosystem_mcp/native_provider.py` invokes the bundled native helper for Calendar, Contacts, and Reminders.
+- `src/apple_ecosystem_mcp/mail_store.py` provides the optional local Mail metadata provider used for supported mailbox/date-window searches.
 - `native/apple-ecosystem-helper.swift` is compiled into `bin/apple-ecosystem-helper` inside the MCPB.
 - `src/apple_ecosystem_mcp/bridge.py` runs AppleScript through `osascript` for Mail, Notes, and legacy fallback paths.
 - `src/apple_ecosystem_mcp/permissions.py` checks common macOS permission gaps at startup.
@@ -58,6 +59,7 @@ Claude Desktop launches the bundle entrypoint. The runner uses the bundled sourc
 
 - User data is passed to the native helper over JSON stdin/stdout, and to AppleScript as positional arguments where AppleScript is still used.
 - AppleScript calls are serialized with a module-level lock because GUI scripting is not thread-safe; native helper calls use bounded subprocess timeouts.
+- The Mail metadata provider and Notes store fallback are read-only and are used only for narrow reliability/performance cases.
 - Tool results are bounded and truncated where needed.
 - Destructive tools require explicit confirmation arguments.
 - iCloud paths are resolved relative to the iCloud root and checked for path traversal.

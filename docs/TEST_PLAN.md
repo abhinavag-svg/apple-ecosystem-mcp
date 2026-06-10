@@ -1,18 +1,20 @@
-# Apple Ecosystem MCP Server — Test Plan
+# Apple Ecosystem MCP Server — Internal Test Plan
 
-This document is a non-implementation test specification derived from [IMPLEMENTATION_PLAN.md](/Users/abhinav/projects/git/apple-ecosystem-mcp/IMPLEMENTATION_PLAN.md). Its purpose is to define test coverage, safety checks, and the future pytest layout for the Apple Ecosystem MCP server without creating executable tests yet.
+This is an internal engineering document. It is a test-planning reference, not a public product document and not a guaranteed line-by-line reflection of the current test suite at every moment.
 
-The goal is to make implementation straightforward later: another engineer should be able to create the actual pytest files directly from this spec, phase by phase.
+The plan began as a non-implementation specification derived from the archived [IMPLEMENTATION_PLAN.md](./archive/root-history/IMPLEMENTATION_PLAN.md). It is now best used as a coverage map, a contracts reference, and a checklist for future regression work.
+
+When this document and the live code disagree, treat the code and active targeted tests as the source of truth, then update this document.
 
 ## Test Structure
 
-Status: Documentation-only spec
+Status: internal planning/reference doc
 
-Planned project layout, matching the Phase 1 structure and later subsystem phases:
+Reference project layout, matching the original phased structure:
 
 ```text
 apple-ecosystem-mcp/
-  IMPLEMENTATION_PLAN.md
+  docs/archive/root-history/IMPLEMENTATION_PLAN.md
   docs/
     TEST_PLAN.md
   tests/
@@ -46,6 +48,8 @@ Execution intent by area:
 - `tests/live/test_live_smoke.py`: Live/manual validation
 
 ## Core Infrastructure Tests
+
+These sections describe the intent behind each area more than they prescribe an exact future file implementation.
 
 ### `tests/conftest.py`
 
@@ -101,10 +105,8 @@ Test intent:
 
 Concrete test cases:
 
-- Mail permission denial is detected from exit code `1` and stderr containing `-1743`
-- Calendar permission denial is detected from exit code `1` and stderr containing `-1743`
-- Contacts permission denial is detected from exit code `1` and stderr containing `-1743`
-- Reminders permission denial is detected from exit code `1` and stderr containing `-1743`
+- Mail automation denial is detected from exit code `1` and stderr containing `-1743`
+- Notes automation denial is detected from exit code `1` and stderr containing `-1743`
 - Apple events denial is detected from stderr containing `not allowed to send Apple events`
 - Full Disk Access failure is detected from `PermissionError` on iCloud root listing
 - warning output includes missing permission name
@@ -119,13 +121,12 @@ Test intent:
 
 - verify the FastMCP server object is wired correctly
 - verify tool-registration side effects happen from `tools/__init__.py`
-- verify the smoke-test tool and annotations match the implementation contracts
+- verify representative registered tools and annotations match the implementation contracts
 
 Concrete test cases:
 
 - importing the server registers all placeholder tool modules
-- `hello_apple` is registered and callable
-- `hello_apple` delegates to `run_applescript("return system version of (system info)")`
+- core read-only tools are registered and callable
 - read-only stubs are marked with `readOnlyHint=True`
 - delete stubs are marked with `destructiveHint=True`
 - no tool definition uses unsupported `**kwargs` in a way that would break FastMCP schema registration
@@ -306,7 +307,7 @@ Test intent:
 
 Concrete test cases:
 
-- `hello_apple` returns the macOS version string
+- one lightweight read-only tool such as `apple_inventory` or `notes_list` works on a live machine
 - Mail smoke test exercises one read-only Mail tool if Mail permission is granted
 - Calendar smoke test exercises one read-only Calendar tool if Calendar permission is granted
 - Contacts smoke test exercises one read-only Contacts tool if Contacts permission is granted
@@ -326,7 +327,7 @@ Phase when executable: Begins in Phase 1 and expands through Phase 5
 
 Test intent:
 
-- enforce the cross-cutting contracts defined in `IMPLEMENTATION_PLAN.md`
+- enforce the cross-cutting contracts defined in the archived implementation plan
 - keep the suite focused on behavior, safety, and compatibility rather than brittle implementation snapshots
 
 Concrete rules to verify later:

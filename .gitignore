@@ -3,6 +3,8 @@ dist/
 build/
 native/build/
 mcpb/
+mcpb/*.mcpb
+*.dxt
 *.egg-info/
 
 # Environment & Secrets
@@ -88,3 +90,10 @@ Desktop.ini
 # Claude Code local config & debug
 .claude/debug.log
 .claude/worktrees/
+
+# Local project config
+.mcp.json
+manifest.local.json
+
+# Office temp files
+~$*.docx

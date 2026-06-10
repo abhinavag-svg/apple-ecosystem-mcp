@@ -1,10 +1,12 @@
-# Apple Ecosystem MCP — Implementation Guide
+# Apple Ecosystem MCP — Internal Engineering Guide
 
-An MCP server that bridges Claude to native macOS apps (Mail, Calendar, Contacts, Reminders, iCloud Drive) via AppleScript and Python. Distributed as an `.mcpb` Desktop Extension through GitHub Releases.
+This is an internal implementation reference for maintainers and contributors. It is not the best public entry point for understanding the product. For the project narrative, use `README.md` and the docs set under `docs/`.
 
-## Critical Contracts (All Agents Must Follow)
+This file exists to capture engineering contracts, release discipline, and contributor expectations for the current codebase.
 
-These are non-negotiable. Breaking them causes tool registration failures, permission errors, or security vulnerabilities.
+## Critical Contracts
+
+These are the working constraints for this repo. Breaking them tends to cause tool registration failures, permission errors, data-shape drift, or security regressions.
 
 ### AppleScript Bridge
 - **argv pattern only:** Always pass user data as positional arguments: `osascript -e 'on run argv...end run' -- "$arg1" "$arg2"`
@@ -58,9 +60,11 @@ These are non-negotiable. Breaking them causes tool registration failures, permi
 
 ## Project Structure
 
+This is an orientation sketch, not a guaranteed exhaustive map. Prefer the actual tree when making changes.
+
 ```
 apple-ecosystem-mcp/
-  IMPLEMENTATION_PLAN.md         # Phase-by-phase implementation specs
+  docs/archive/root-history/IMPLEMENTATION_PLAN.md  # historical phase-by-phase implementation specs
   docs/
     TEST_PLAN.md                 # Test contracts per subsystem
   src/
@@ -97,26 +101,28 @@ apple-ecosystem-mcp/
   CLAUDE.md                       # This file
 ```
 
-## Phase Breakdown & Responsibilities
+## Historical Phase Breakdown
+
+This table is preserved mostly for context from the original build-out of the project.
 
 | Phase | Owner | Deliverable | Dependencies |
 |-------|-------|-------------|--------------|
-| 1 | Single session (you) | Scaffold, bridge.py, permissions.py, server.py, hello_apple, core tests | None |
+| 1 | Single session (you) | Scaffold, bridge.py, permissions.py, server.py, core tests | None |
 | 2 | Mail Engineer | mail.py tools (8 tools), mail tests complete | Phase 1 |
 | 3 | Calendar Engineer | calendar.py tools (6 tools), calendar tests complete | Phase 1 |
 | 4 | Contacts Engineer | contacts.py + reminders.py tools (7 tools total), tests complete | Phase 1 |
 | 5 | Single session | icloud.py tools (5 tools), iCloud tests complete | Phase 1 |
 | 6 | Single session | manifest.json, MCPB bundling, GitHub release | Phases 2–5 |
 
-## How to Use This Document
+## How To Use This Document
 
-**Phase 1 (solo):** Read IMPLEMENTATION_PLAN.md Phase 1 prompt. This CLAUDE.md is your reference for contracts.
+If you are changing runtime behavior, read the contracts and release checklist here first.
 
-**Phases 2–4 (agent teams):** Each agent reads:
-1. IMPLEMENTATION_PLAN.md (full document)
-2. docs/TEST_PLAN.md (their subsystem's test spec)
-3. CLAUDE.md (this file — contracts only)
-4. Their phase prompt from IMPLEMENTATION_PLAN.md
+If you need original implementation chronology or early design intent, then read:
+
+1. `docs/archive/root-history/IMPLEMENTATION_PLAN.md`
+2. `docs/TEST_PLAN.md`
+3. the active docs under `docs/`
 
 **Agent Communication:**
 - Task list: `~/.claude/tasks/apple-mcp-team/`
@@ -124,6 +130,8 @@ apple-ecosystem-mcp/
 - Blockers: message team lead immediately with full context
 
 ## Git Workflow
+
+This section is guidance, not an exact required branch model for every future change.
 
 ```bash
 # Phase 1: develop on main
@@ -145,9 +153,9 @@ git checkout main && git pull   # Merge phases 2–4 first
 # ... create manifest.json, MCPB bundle ...
 ```
 
-## Phase 6: Release Checklist (MANDATORY)
+## Release Checklist
 
-**Do not skip steps. Verify each before proceeding.**
+Use this as the repo’s conservative release ritual.
 
 ### Pre-Release
 - [ ] All tests pass: `make test`
@@ -188,10 +196,10 @@ gh release view vA.B.C --json assets -q '.assets[] | "\(.name) (\(.size | tonumb
 - [ ] GitHub release URL works: https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases/tag/vA.B.C
 - [ ] MCPB downloads from release
 - [ ] MCPB installs in Claude Desktop
-- [ ] `hello_apple` works after install
+- [ ] `apple_inventory` or another read-only smoke tool works after install
 - [ ] Update `docs/session-state.md` with any post-release notes
 
-**Do not consider release complete until all checks pass and are verified.**
+Do not treat the release as done until these checks pass.
 
 ## Running Tests
 
@@ -209,7 +217,7 @@ make test
 APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v
 ```
 
-## Key Decision: Why These Contracts?
+## Why These Contracts Exist
 
 - **argv pattern:** Prevents AppleScript injection. One safe pattern avoids maintenance burden of two patterns.
 - **threading.Lock:** AppleScript drives GUI apps; concurrent calls crash or produce inconsistent state.
@@ -220,6 +228,6 @@ APPLE_MCP_LIVE_TESTS=1 uv run pytest tests/live/ -v
 
 ## Resources
 
-- **[IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md)** — Full implementation specs, phase prompts, tool contracts
+- **[docs/archive/root-history/IMPLEMENTATION_PLAN.md](./docs/archive/root-history/IMPLEMENTATION_PLAN.md)** — Historical implementation specs, phase prompts, tool contracts
 - **[docs/TEST_PLAN.md](./docs/TEST_PLAN.md)** — Test specs, coverage matrix, safety checks
 - **[.claude/settings.local.json](./.claude/settings.local.json)** — Pre-approved tools, agent teams enabled

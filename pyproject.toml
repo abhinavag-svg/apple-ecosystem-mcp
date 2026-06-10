@@ -28,8 +28,8 @@ authors = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/abhinavagrawal/apple-ecosystem-mcp"
-Repository = "https://github.com/abhinavagrawal/apple-ecosystem-mcp"
+Homepage = "https://github.com/abhinavag-svg/apple-ecosystem-mcp"
+Repository = "https://github.com/abhinavag-svg/apple-ecosystem-mcp"
 
 [project.scripts]
 apple-ecosystem-mcp = "apple_ecosystem_mcp.__main__:main"

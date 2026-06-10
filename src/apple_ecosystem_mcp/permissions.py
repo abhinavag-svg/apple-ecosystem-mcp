@@ -37,26 +37,18 @@ def _probe_mail() -> bool:
     return not _is_tcc_denied(code, stderr)
 
 
-def _probe_calendar() -> bool:
-    """Probe Calendar automation permission."""
-    code, stderr = _run_applescript_probe('tell application "Calendar" to return name')
-    return not _is_tcc_denied(code, stderr)
-
-
-def _probe_contacts() -> bool:
-    """Probe Contacts automation permission."""
-    code, stderr = _run_applescript_probe('tell application "Contacts" to return name')
-    return not _is_tcc_denied(code, stderr)
-
-
-def _probe_reminders() -> bool:
-    """Probe Reminders automation permission."""
-    code, stderr = _run_applescript_probe('tell application "Reminders" to return name')
+def _probe_notes() -> bool:
+    """Probe Notes automation permission."""
+    code, stderr = _run_applescript_probe('tell application "Notes" to return name')
     return not _is_tcc_denied(code, stderr)
 
 
 def _probe_full_disk_access() -> bool:
-    """Probe Full Disk Access via iCloud Drive root."""
+    """Probe Full Disk Access via iCloud Drive root.
+
+    This also matters for optional local metadata providers such as Apple Mail's
+    Envelope Index on some systems.
+    """
     try:
         os.listdir(ICLOUD_ROOT)
         return True
@@ -81,22 +73,14 @@ def check_permissions() -> None:
     except Exception:
         pass
     try:
-        if not _probe_calendar():
-            missing.append(("Automation → Calendar", _AUTOMATION_SETTINGS))
+        if not _probe_notes():
+            missing.append(("Automation → Notes", _AUTOMATION_SETTINGS))
     except Exception:
         pass
     try:
-        if not _probe_contacts():
-            missing.append(("Automation → Contacts", _AUTOMATION_SETTINGS))
-    except Exception:
-        pass
-    try:
-        if not _probe_reminders():
-            missing.append(("Automation → Reminders", _AUTOMATION_SETTINGS))
-    except Exception:
-        pass
-
-    try:
+        # Calendar, Contacts, and Reminders now use native macOS framework
+        # permissions. We let those tools surface precise per-domain errors on
+        # first use rather than guessing at startup.
         if not _probe_full_disk_access():
             missing.append(("Full Disk Access", _FDA_SETTINGS))
     except Exception:
