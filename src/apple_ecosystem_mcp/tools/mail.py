@@ -1087,7 +1087,7 @@ end run
 """
 
 
-@mcp.tool(annotations=ToolAnnotations(title="Move Message", destructiveHint=True))
+@mcp.tool(annotations=ToolAnnotations(title="Move Message"))
 def mail_move_message(message_id: str, mailbox_id: str) -> dict:
     """Move a Mail message to a mailbox by persistent id."""
     try:
@@ -1215,8 +1215,10 @@ end run
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Message", destructiveHint=True))
-def mail_delete(message_id: str) -> dict:
-    """Delete a Mail message by canonical id."""
+def mail_delete(message_id: str, confirm: bool = False) -> dict:
+    """Delete a Mail message by canonical id. Requires confirm=True."""
+    if not confirm:
+        return {"preview": f"Would delete message: {message_id}", "confirmed": False}
     raw = run_applescript(_DELETE_SCRIPT, message_id)
     data = _parse_json(raw) or {"success": True}
     if not isinstance(data, dict):

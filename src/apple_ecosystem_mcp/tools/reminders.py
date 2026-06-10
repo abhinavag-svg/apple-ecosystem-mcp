@@ -835,8 +835,10 @@ def reminders_complete(reminder_id: str) -> dict:
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Reminder", destructiveHint=True))
-def reminders_delete(reminder_id: str) -> dict:
-    """Delete a reminder."""
+def reminders_delete(reminder_id: str, confirm: bool = False) -> dict:
+    """Delete a reminder. Requires confirm=True."""
+    if not confirm:
+        return {"preview": f"Would delete reminder: {reminder_id}", "confirmed": False}
     try:
         data = try_native("reminders", "delete", {"reminder_id": reminder_id}, timeout=15)
     except NativeProviderUnavailable:

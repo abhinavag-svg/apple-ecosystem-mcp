@@ -432,9 +432,16 @@ def test_reminders_complete_uses_canonical_id(monkeypatch):
 
 def test_reminders_delete_uses_canonical_id(monkeypatch):
     run_mock = _patch_run(monkeypatch, "R-UUID-4")
-    out = reminders.reminders_delete("R-UUID-4")
+    out = reminders.reminders_delete("R-UUID-4", confirm=True)
     assert out == {"id": "R-UUID-4", "success": True}
     assert run_mock.call_args.args[1] == "R-UUID-4"
+
+
+def test_reminders_delete_requires_confirmation(monkeypatch):
+    run_mock = _patch_run(monkeypatch, "R-UUID-4")
+    out = reminders.reminders_delete("R-UUID-4")
+    assert out == {"preview": "Would delete reminder: R-UUID-4", "confirmed": False}
+    run_mock.assert_not_called()
 
 
 def test_reminders_list_explicit_params_not_kwargs():

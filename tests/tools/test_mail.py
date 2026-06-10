@@ -55,6 +55,13 @@ def test_mail_delete_destructive_annotation():
     assert tools["mail_delete"].annotations.destructiveHint is True
 
 
+def test_mail_move_message_is_not_marked_destructive():
+    from apple_ecosystem_mcp import server
+
+    tools = _inspect_tools(server.mcp)
+    assert not tools["mail_move_message"].annotations.destructiveHint
+
+
 # ---------------------------------------------------------------------------
 # mail_list_mailboxes
 # ---------------------------------------------------------------------------
@@ -243,7 +250,7 @@ def test_mail_delete_accepts_rfc_id(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
 
     rfc_id = "<msg-12345@example.com>"
-    result = mail.mail_delete(rfc_id)
+    result = mail.mail_delete(rfc_id, confirm=True)
     assert result["success"] is True
     assert run_mock.call_args.args[1:] == (rfc_id,)
 
@@ -997,11 +1004,20 @@ def test_mail_delete_by_canonical_id(monkeypatch):
     run_mock = Mock(return_value=json.dumps({"success": True}))
     monkeypatch.setattr(mail, "run_applescript", run_mock)
 
-    result = mail.mail_delete("<m@x>")
+    result = mail.mail_delete("<m@x>", confirm=True)
     assert result["success"] is True
     assert result["message_id"] == "<m@x>"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>",)
+
+
+def test_mail_delete_requires_confirmation(monkeypatch):
+    run_mock = Mock(return_value=json.dumps({"success": True}))
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    result = mail.mail_delete("<m@x>")
+    assert result == {"preview": "Would delete message: <m@x>", "confirmed": False}
+    run_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

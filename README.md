@@ -15,6 +15,27 @@ The project ships primarily as a Claude Desktop `.mcpb` bundle.
 - Friendly-name preferences and stable target resolution
 - Local scheduled tasks built on top of the same tools
 
+## Example Prompts
+
+These are the kinds of things the connector is built for:
+
+- `Draft an email to Ankita saying we need to plan a date night next week in between the kids' schedule. Check her contact details, look at next week's calendar openings, and help me suggest a couple of realistic evenings.`
+- `Find the latest thread with our school, check my calendar for this week, and draft a reply proposing two pickup-call times that do not conflict with anything.`
+- `Look up David Chen in my contacts, find our recent email history, check when I'm free next Thursday, and draft a meeting follow-up with a few time options.`
+- `Review tomorrow's calendar, my overdue reminders, and any unread important mail, then give me a short morning game plan.`
+- `Find my Tuscany Itinerary note, pull the related calendar events and any travel emails, and help me assemble a clean trip summary.`
+
+These are deliberately cross-app. The value is not just one tool at a time, but Claude being able to reason across Mail, Calendar, Contacts, Reminders, Notes, and files together.
+
+## Scheduled Workflow Examples
+
+Scheduled tasks are better for recurring read-heavy workflows than one-off commands.
+
+- `Create a scheduled task that runs every weekday at 7:00 AM and prepares a daily triage summary from my calendar, reminders, and important unread mail.`
+- `Create a scheduled task for Sunday evening that gives me a weekly planning digest with next week's events, overdue reminders, and open follow-ups.`
+- `Create a scheduled task for 8:30 PM that generates a tomorrow preview with calendar events, due reminders, and anything I should prepare tonight.`
+- `List my scheduled tasks and show me which ones are enabled.`
+
 ## Runtime Architecture
 
 - Calendar, Contacts, and Reminders use a bundled native macOS helper.

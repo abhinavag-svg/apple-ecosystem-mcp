@@ -5,7 +5,8 @@
   "version": "0.6.0",
   "description": "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive",
   "author": {
-    "name": "Abhinav Agrawal"
+    "name": "Abhinav Agrawal",
+    "email": "abhinavag@icloud.com"
   },
   "repository": {
     "type": "git",
