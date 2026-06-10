@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apple-ecosystem-mcp"
-version = "0.4.1"
-description = "MCP server for Apple Mail, Calendar, Contacts, Reminders, and iCloud Drive — the missing half of Claude's Apple ecosystem integration."
+version = "0.5.0"
+description = "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive."
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
@@ -14,7 +14,7 @@ dependencies = [
   "mcp>=1",
   "charset-normalizer>=3",
 ]
-keywords = ["mcp", "apple", "macos", "mail", "calendar", "contacts", "reminders"]
+keywords = ["mcp", "apple", "macos", "mail", "calendar", "contacts", "reminders", "notes"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",

@@ -5,6 +5,7 @@ import json
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript
+from ..native_provider import NativeProviderUnavailable, try_native
 from ..server import mcp
 
 _SEARCH_LIMIT_DEFAULT = 10
@@ -578,6 +579,48 @@ end replace
 def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT, group: str | None = None) -> list[dict]:
     """Search contacts by name, email, phone, or company."""
     capped = max(1, min(int(limit), _SEARCH_LIMIT_MAX))
+    try:
+        parsed = try_native(
+            "contacts",
+            "search",
+            {"query": query, "limit": capped, "group": group or ""},
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        parsed = None
+    if not isinstance(parsed, list):
+        parsed = None
+    if parsed is None:
+        raw = run_applescript(_SEARCH_SCRIPT, query, str(capped), group or "")
+        try:
+            parsed = json.loads(raw) if raw else []
+        except json.JSONDecodeError as e:
+            raise RuntimeError("Failed to parse Contacts search response") from e
+    results: list[dict] = []
+    for row in parsed[:capped]:
+        if not isinstance(row, dict):
+            continue
+        emails = _normalize_labeled_items(row.get("emails"))
+        phones = _normalize_labeled_items(row.get("phones"))
+        email = _nn(row.get("email")) or _first_labeled_value(emails)
+        phone = _nn(row.get("phone")) or _first_labeled_value(phones)
+        results.append(
+            {
+                "id": row.get("id"),
+                "first": _nn(row.get("first")),
+                "last": _nn(row.get("last")),
+                "email": email,
+                "phone": phone,
+                "company": _nn(row.get("company")),
+                "emails": emails,
+                "phones": phones,
+                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
+            }
+        )
+    return results
+
+
+def _contacts_search_applescript(query: str, capped: int, group: str | None) -> list[dict]:
     raw = run_applescript(_SEARCH_SCRIPT, query, str(capped), group or "")
     try:
         parsed = json.loads(raw) if raw else []
@@ -608,11 +651,16 @@ def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT, group: str |
 @mcp.tool(annotations=ToolAnnotations(title="Get Contact", readOnlyHint=True))
 def contacts_get(contact_id: str) -> dict:
     """Get a full contact record by id."""
-    raw = run_applescript(_GET_SCRIPT, contact_id)
     try:
-        data = json.loads(raw) if raw else {}
-    except json.JSONDecodeError as e:
-        raise RuntimeError("Failed to parse Contacts get response") from e
+        data = try_native("contacts", "get", {"contact_id": contact_id}, timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if not isinstance(data, dict):
+        raw = run_applescript(_GET_SCRIPT, contact_id)
+        try:
+            data = json.loads(raw) if raw else {}
+        except json.JSONDecodeError as e:
+            raise RuntimeError("Failed to parse Contacts get response") from e
 
     notes = _nn(data.get("notes")) or ""
     truncated = False
@@ -654,6 +702,24 @@ def contacts_create(
     company: str | None = None,
 ) -> dict:
     """Create a new contact."""
+    try:
+        data = try_native(
+            "contacts",
+            "create",
+            {
+                "first": first,
+                "last": last or "",
+                "email": email or "",
+                "phone": phone or "",
+                "company": company or "",
+            },
+            timeout=15,
+        )
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict) and data.get("id"):
+        return {"id": data["id"], "success": True}
+
     pid = run_applescript(
         _CREATE_SCRIPT,
         first,
@@ -676,6 +742,24 @@ def contacts_update(
 ) -> dict:
     """Update fields on an existing contact."""
     sentinel = "__NO_CHANGE__"
+    payload = {"contact_id": contact_id}
+    if first is not None:
+        payload["first"] = first
+    if last is not None:
+        payload["last"] = last
+    if email is not None:
+        payload["email"] = email
+    if phone is not None:
+        payload["phone"] = phone
+    if company is not None:
+        payload["company"] = company
+    try:
+        data = try_native("contacts", "update", payload, timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict) and data.get("id"):
+        return {"id": data["id"], "success": True}
+
     pid = run_applescript(
         _UPDATE_SCRIPT,
         contact_id,
@@ -688,6 +772,66 @@ def contacts_update(
     return {"id": pid or contact_id, "success": True}
 
 
+@mcp.tool(annotations=ToolAnnotations(title="Delete Contact", destructiveHint=True))
+def contacts_delete(contact_id: str, confirm: bool = False) -> dict:
+    """Delete a contact by id. Requires confirm=True."""
+    if not confirm:
+        try:
+            preview = contacts_get(contact_id)
+            label = " ".join(str(part) for part in [preview.get("first"), preview.get("last")] if part) or contact_id
+        except RuntimeError:
+            label = contact_id
+        return {"preview": f"Would delete contact: {label}", "confirmed": False}
+    try:
+        data = try_native("contacts", "delete", {"contact_id": contact_id}, timeout=15)
+    except NativeProviderUnavailable as exc:
+        raise RuntimeError("contacts_delete requires the bundled native helper") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Unexpected contacts delete payload")
+    return {"id": data.get("id") or contact_id, "success": True}
+
+
+def _birthday_rows(mode: str, days: int = 30) -> list[dict]:
+    capped_days = max(1, min(int(days), 366))
+    try:
+        parsed = try_native("contacts", "birthdays", {"mode": mode, "days": capped_days}, timeout=20)
+    except NativeProviderUnavailable as exc:
+        raise RuntimeError(f"contacts_birthdays_{mode} requires the bundled native helper") from exc
+    results: list[dict] = []
+    for row in parsed if isinstance(parsed, list) else []:
+        if not isinstance(row, dict):
+            continue
+        emails = _normalize_labeled_items(row.get("emails"))
+        phones = _normalize_labeled_items(row.get("phones"))
+        results.append(
+            {
+                "id": row.get("id"),
+                "first": _nn(row.get("first")),
+                "last": _nn(row.get("last")),
+                "email": _nn(row.get("email")) or _first_labeled_value(emails),
+                "phone": _nn(row.get("phone")) or _first_labeled_value(phones),
+                "company": _nn(row.get("company")),
+                "birthday": _nn(row.get("birthday")),
+                "emails": emails,
+                "phones": phones,
+                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
+            }
+        )
+    return results
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Today's Contact Birthdays", readOnlyHint=True))
+def contacts_birthdays_today() -> list[dict]:
+    """Return contacts with birthdays today."""
+    return _birthday_rows("today", days=1)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Upcoming Contact Birthdays", readOnlyHint=True))
+def contacts_birthdays_upcoming(days: int = 30) -> list[dict]:
+    """Return contacts with birthdays in the next N days."""
+    return _birthday_rows("upcoming", days=days)
+
+
 @mcp.tool(annotations=ToolAnnotations(title="List Contact Groups", readOnlyHint=True))
 def contacts_list_groups(include_metadata: bool = False) -> list[str] | list[dict]:
     """List contact groups.
@@ -696,23 +840,48 @@ def contacts_list_groups(include_metadata: bool = False) -> list[str] | list[dic
     include_metadata=True to receive stable group identifiers and discovery
     metadata.
     """
-    raw = run_applescript(_GROUPS_SCRIPT)
     try:
-        parsed = json.loads(raw) if raw else []
-    except json.JSONDecodeError as e:
-        raise RuntimeError("Failed to parse Contacts groups response") from e
-    names = [str(n) for n in parsed if _nn(n)]
+        parsed = try_native("contacts", "list-groups", timeout=15)
+    except NativeProviderUnavailable:
+        parsed = None
+    if parsed is None:
+        raw = run_applescript(_GROUPS_SCRIPT)
+        try:
+            parsed = json.loads(raw) if raw else []
+        except json.JSONDecodeError as e:
+            raise RuntimeError("Failed to parse Contacts groups response") from e
+    names = [str(n.get("name") if isinstance(n, dict) else n) for n in parsed if _nn(n.get("name") if isinstance(n, dict) else n)]
     if not include_metadata:
         return names
-    return [
-        {
-            "id": name,
-            "name": name,
-            "kind": "contact_group",
-            "account_name": None,
-            "path": None,
-            "writable": None,
-            "default_candidate": idx == 0,
-        }
-        for idx, name in enumerate(names)
-    ]
+    normalized: list[dict] = []
+    for idx, item in enumerate(parsed):
+        if isinstance(item, dict):
+            name = _nn(item.get("name"))
+            if not name:
+                continue
+            normalized.append(
+                {
+                    "id": _nn(item.get("id")) or str(name),
+                    "name": str(name),
+                    "kind": "contact_group",
+                    "account_name": _nn(item.get("account_name")),
+                    "path": _nn(item.get("path")),
+                    "writable": item.get("writable"),
+                    "default_candidate": idx == 0,
+                }
+            )
+        else:
+            name = _nn(item)
+            if name:
+                normalized.append(
+                    {
+                        "id": str(name),
+                        "name": str(name),
+                        "kind": "contact_group",
+                        "account_name": None,
+                        "path": None,
+                        "writable": None,
+                        "default_candidate": idx == 0,
+                    }
+                )
+    return normalized

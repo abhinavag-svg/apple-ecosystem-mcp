@@ -7,6 +7,7 @@ from typing import Any
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
+from ..native_provider import NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -72,6 +73,10 @@ def _normalize_due_iso(due: str) -> str:
         dt = dt.astimezone().replace(tzinfo=None)
     # AppleScript parser expects seconds.
     return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _native_required_error(tool: str) -> RuntimeError:
+    return RuntimeError(f"{tool} requires the bundled native helper")
 
 
 def _nn(value):
@@ -419,11 +424,16 @@ def reminders_lists(include_metadata: bool = False) -> list[Any]:
     By default this preserves the original list-of-names response. Set
     include_metadata=True to get stable list identifiers for targeting.
     """
-    raw = _run_reminders_script(_LISTS_SCRIPT)
     try:
-        parsed = json.loads(raw) if raw else []
-    except json.JSONDecodeError as e:
-        raise RuntimeError("Failed to parse Reminders lists response") from e
+        parsed = try_native("reminders", "list-lists", timeout=15)
+    except NativeProviderUnavailable:
+        parsed = None
+    if not isinstance(parsed, list):
+        raw = _run_reminders_script(_LISTS_SCRIPT)
+        try:
+            parsed = json.loads(raw) if raw else []
+        except json.JSONDecodeError as e:
+            raise RuntimeError("Failed to parse Reminders lists response") from e
 
     lists: list[dict] = []
     for row in parsed:
@@ -445,9 +455,9 @@ def reminders_lists(include_metadata: bool = False) -> list[Any]:
                     "id": item["id"],
                     "name": item["name"],
                     "kind": "reminder_list",
-                    "account_name": None,
-                    "path": None,
-                    "writable": None,
+                    "account_name": _nn(item.get("account_name")),
+                    "path": _nn(item.get("path")),
+                    "writable": item.get("writable"),
                     "default_candidate": idx == 0,
                 }
             )
@@ -476,6 +486,36 @@ def reminders_list(
             "hint": "Call reminders_list again with list_name=<name> from the list above",
         }
     capped = max(1, min(int(limit), 100))
+    try:
+        parsed = try_native(
+            "reminders",
+            "list-reminders",
+            {
+                "list_name": list_name or "",
+                "reminders_list_id": reminders_list_id or "",
+                "completed": completed,
+                "limit": capped,
+            },
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        parsed = None
+    if not isinstance(parsed, list):
+        parsed = None
+    if parsed is None:
+        parsed = _reminders_list_applescript(list_name, completed, reminders_list_id, capped)
+    if isinstance(parsed, dict):
+        return parsed
+
+    return _normalize_reminder_rows(parsed)
+
+
+def _reminders_list_applescript(
+    list_name: str | None,
+    completed: bool,
+    reminders_list_id: str | None,
+    capped: int,
+) -> list[dict] | dict:
     scan_limit = max(capped, min(capped * 3, 60))
     timeout_seconds = 10
     try:
@@ -498,9 +538,14 @@ def reminders_list(
         parsed = json.loads(raw) if raw else []
     except json.JSONDecodeError as e:
         raise RuntimeError("Failed to parse Reminders list response") from e
+    return parsed
 
+
+def _normalize_reminder_rows(parsed: list[dict]) -> list[dict]:
     results: list[dict] = []
     for row in parsed:
+        if not isinstance(row, dict):
+            continue
         results.append(
             {
                 "id": row.get("id"),
@@ -516,6 +561,195 @@ def reminders_list(
             }
         )
     return results
+
+
+def _resolve_reminder_list_target(
+    list_name: str | None = None,
+    reminders_list_id: str | None = None,
+) -> tuple[str | None, str | None] | dict:
+    if not list_name and not reminders_list_id:
+        return {
+            "error": "missing_target",
+            "message": "Provide list_name or reminders_list_id",
+            "scope": "reminder_list",
+        }
+    try:
+        resolved = resolve_target(
+            reminders_list_id or list_name,
+            reminders_lists(include_metadata=True),
+            scope="reminder_list",
+            preferences=PreferencesStore(),
+        )
+    except ResolverError as exc:
+        return exc.to_dict()
+    return _nn(resolved.item.get("id")), _nn(resolved.item.get("name"))
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Create Reminder List"))
+def reminders_create_list(name: str) -> dict:
+    """Create a reminder list."""
+    try:
+        data = try_native("reminders", "create-list", {"name": name}, timeout=15)
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error("reminders_create_list") from exc
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("Unexpected create reminder list payload")
+    return {"id": data["id"], "name": data.get("name") or name, "success": True}
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Rename Reminder List"))
+def reminders_rename_list(
+    new_name: str,
+    list_name: str | None = None,
+    reminders_list_id: str | None = None,
+) -> dict:
+    """Rename a reminder list by stable id or friendly name."""
+    resolved = _resolve_reminder_list_target(list_name, reminders_list_id)
+    if isinstance(resolved, dict):
+        return resolved
+    resolved_id, resolved_name = resolved
+    try:
+        data = try_native(
+            "reminders",
+            "rename-list",
+            {
+                "reminders_list_id": resolved_id or "",
+                "old_name": resolved_name or list_name or "",
+                "new_name": new_name,
+            },
+            timeout=15,
+        )
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error("reminders_rename_list") from exc
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RuntimeError("Unexpected rename reminder list payload")
+    return {"id": data["id"], "name": data.get("name") or new_name, "success": True}
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Delete Reminder List", destructiveHint=True))
+def reminders_delete_list(
+    list_name: str | None = None,
+    reminders_list_id: str | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Delete a reminder list. Requires confirm=True."""
+    resolved = _resolve_reminder_list_target(list_name, reminders_list_id)
+    if isinstance(resolved, dict):
+        return resolved
+    resolved_id, resolved_name = resolved
+    label = resolved_name or list_name or reminders_list_id
+    if not confirm:
+        return {"preview": f"Would delete reminder list: {label}", "confirmed": False}
+    try:
+        data = try_native(
+            "reminders",
+            "delete-list",
+            {"reminders_list_id": resolved_id or "", "name": resolved_name or list_name or ""},
+            timeout=15,
+        )
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error("reminders_delete_list") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Unexpected delete reminder list payload")
+    return {"id": data.get("id") or resolved_id, "success": True}
+
+
+def _reminders_matching_due(kind: str, limit: int) -> list[dict]:
+    capped = max(1, min(int(limit), 100))
+    try:
+        parsed = try_native(
+            "reminders",
+            "search",
+            {"query": "", "limit": 200, "include_completed": False},
+            timeout=20,
+        )
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error(f"reminders_{kind}") from exc
+    rows = _normalize_reminder_rows(parsed if isinstance(parsed, list) else [])
+    today = datetime.now().date()
+    matches: list[dict] = []
+    for row in rows:
+        due = row.get("due")
+        if not due:
+            continue
+        try:
+            due_date = datetime.fromisoformat(str(due)).date()
+        except ValueError:
+            continue
+        if (kind == "today" and due_date == today) or (kind == "overdue" and due_date < today):
+            matches.append(row)
+    return matches[:capped]
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Today's Reminders", readOnlyHint=True))
+def reminders_today(limit: int = 50) -> list[dict]:
+    """Return incomplete reminders due today across all lists."""
+    return _reminders_matching_due("today", limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Overdue Reminders", readOnlyHint=True))
+def reminders_overdue(limit: int = 50) -> list[dict]:
+    """Return incomplete reminders due before today across all lists."""
+    return _reminders_matching_due("overdue", limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Search Reminders", readOnlyHint=True))
+def reminders_search(query: str, limit: int = 50, include_completed: bool = False) -> list[dict]:
+    """Search reminders by title or notes across all lists."""
+    capped = max(1, min(int(limit), 100))
+    try:
+        parsed = try_native(
+            "reminders",
+            "search",
+            {"query": query, "limit": capped, "include_completed": include_completed},
+            timeout=20,
+        )
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error("reminders_search") from exc
+    return _normalize_reminder_rows(parsed if isinstance(parsed, list) else [])
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Update Reminder"))
+def reminders_update(
+    reminder_id: str,
+    title: str | None = None,
+    due: str | None = None,
+    notes: str | None = None,
+    priority: int | None = None,
+    clear_due: bool = False,
+    clear_notes: bool = False,
+) -> dict:
+    """Update a reminder by canonical id."""
+    if clear_due and due is not None:
+        raise RuntimeError("Use either due or clear_due, not both")
+    if clear_notes and notes is not None:
+        raise RuntimeError("Use either notes or clear_notes, not both")
+    payload: dict[str, Any] = {
+        "reminder_id": reminder_id,
+        "clear_due": clear_due,
+        "clear_notes": clear_notes,
+    }
+    if title is not None:
+        payload["title"] = title
+    if due is not None:
+        payload["due"] = _normalize_due_iso(due)
+    if notes is not None:
+        payload["notes"] = notes
+    if priority is not None:
+        payload["priority"] = max(0, min(int(priority), 9))
+    try:
+        data = try_native("reminders", "update", payload, timeout=15)
+    except NativeProviderUnavailable as exc:
+        raise _native_required_error("reminders_update") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("Unexpected update reminder payload")
+    return {"id": data.get("id") or reminder_id, "success": True}
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Rename Reminder"))
+def reminders_rename(reminder_id: str, title: str) -> dict:
+    """Rename a reminder by canonical id."""
+    return reminders_update(reminder_id, title=title)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Create Reminder"))
@@ -553,6 +787,25 @@ def reminders_create(
     if due:
         due_str = _normalize_due_iso(due)
     priority = max(0, min(int(priority), 9))
+    try:
+        data = try_native(
+            "reminders",
+            "create",
+            {
+                "title": title,
+                "reminders_list_id": reminders_list_id or "",
+                "list_name": list_name or "",
+                "due": due_str,
+                "notes": notes or "",
+                "priority": priority,
+            },
+            timeout=15,
+        )
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict) and data.get("id"):
+        return {"id": data["id"], "success": True}
+
     rid = _run_reminders_script(
         _CREATE_SCRIPT,
         (
@@ -570,6 +823,13 @@ def reminders_create(
 @mcp.tool(annotations=ToolAnnotations(title="Complete Reminder", destructiveHint=True))
 def reminders_complete(reminder_id: str) -> dict:
     """Mark a reminder as complete."""
+    try:
+        data = try_native("reminders", "complete", {"reminder_id": reminder_id}, timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict):
+        return {"id": data.get("id") or reminder_id, "success": True}
+
     rid = _run_reminders_script(_COMPLETE_SCRIPT, (reminder_id,))
     return {"id": rid or reminder_id, "success": True}
 
@@ -577,5 +837,12 @@ def reminders_complete(reminder_id: str) -> dict:
 @mcp.tool(annotations=ToolAnnotations(title="Delete Reminder", destructiveHint=True))
 def reminders_delete(reminder_id: str) -> dict:
     """Delete a reminder."""
+    try:
+        data = try_native("reminders", "delete", {"reminder_id": reminder_id}, timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict):
+        return {"id": data.get("id") or reminder_id, "success": True}
+
     rid = _run_reminders_script(_DELETE_SCRIPT, (reminder_id,))
     return {"id": rid or reminder_id, "success": True}

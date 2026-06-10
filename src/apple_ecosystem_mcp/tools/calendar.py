@@ -7,6 +7,7 @@ from typing import Any
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
+from ..native_provider import NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -567,6 +568,23 @@ def _with_attendees_alias(record: dict) -> dict:
 
 @cache_inventory("calendars", ttl=30)
 def _calendars_cached() -> list[dict]:
+    try:
+        data = try_native("calendar", "list-calendars", timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, list):
+        normalized: list[dict] = []
+        default_marked = False
+        for row in data:
+            if not isinstance(row, dict):
+                continue
+            item = _normalize_calendar_row(row)
+            if item["writable"] is True and not default_marked:
+                item["default_candidate"] = True
+                default_marked = True
+            normalized.append(item)
+        return normalized
+
     raw = run_applescript(_LIST_CALENDARS_SCRIPT, timeout=25)
     data = _parse_json(raw)
     if not isinstance(data, list):
@@ -631,6 +649,17 @@ def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[d
     return merged
 
 
+def _day_bounds(value: str | None = None, *, offset_days: int = 0) -> tuple[str, str]:
+    if value:
+        day = datetime.fromisoformat(_normalize_calendar_iso(value)).date()
+    else:
+        day = datetime.now().date()
+    day = day + timedelta(days=offset_days)
+    start = datetime.combine(day, datetime.min.time())
+    end = start + timedelta(days=1)
+    return start.isoformat(), end.isoformat()
+
+
 # ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
@@ -658,6 +687,23 @@ def calendar_list_events(
     end_norm = _normalize_calendar_iso(end)
 
     capped = max(1, min(int(limit), LIST_EVENTS_MAX_LIMIT))
+    try:
+        data = try_native(
+            "calendar",
+            "list-events",
+            {
+                "start": start_norm,
+                "end": end_norm,
+                "calendar_uid": calendar_uid or "",
+                "limit": capped,
+            },
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, list):
+        return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+
     raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "", timeout=35)
     data = _parse_json(raw)
     if not isinstance(data, list):
@@ -668,6 +714,13 @@ def calendar_list_events(
 @mcp.tool(annotations=ToolAnnotations(title="Get Event", readOnlyHint=True))
 def calendar_get_event(event_id: str) -> dict:
     """Get details for a specific event by canonical UID."""
+    try:
+        data = try_native("calendar", "get-event", {"event_id": event_id}, timeout=15)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict):
+        return _with_attendees_alias(data)
+
     raw = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
     data = _parse_json(raw)
     if data is None:
@@ -686,6 +739,8 @@ def calendar_create_event(
     location: str | None = None,
     notes: str | None = None,
     invitees: list[str] | None = None,
+    url: str | None = None,
+    all_day: bool = False,
 ) -> dict:
     """Create a calendar event; rejects non-writable calendars.
 
@@ -704,6 +759,30 @@ def calendar_create_event(
         calendar_uid = resolved_calendar_uid
 
     invitees_csv = ",".join(_dedupe_emails(invitees))
+    try:
+        data = try_native(
+            "calendar",
+            "create-event",
+            {
+                "calendar_uid": calendar_uid or "",
+                "title": title,
+                "start": start_norm,
+                "end": end_norm,
+                "location": location or "",
+                "notes": notes or "",
+                "url": url or "",
+                "all_day": all_day,
+                "invitees": _dedupe_emails(invitees),
+            },
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict) and data.get("uid"):
+        return {"uid": data["uid"], "success": True}
+    if url or all_day:
+        raise RuntimeError("calendar_create_event with url or all_day requires the bundled native helper")
+
     raw = run_applescript(
         _CREATE_EVENT_SCRIPT,
         calendar_uid or "",
@@ -731,8 +810,11 @@ def calendar_update_event(
     notes: str | None = None,
     invitees: list[str] | None = None,
     attendees: list[str] | None = None,
+    url: str | None = None,
     clear_location: bool = False,
     clear_notes: bool = False,
+    clear_url: bool = False,
+    all_day: bool | None = None,
 ) -> dict:
     """Update an existing event by UID (only provided fields are changed).
 
@@ -752,18 +834,46 @@ def calendar_update_event(
         raise RuntimeError("Use either notes or clear_notes, not both")
     if invitees is not None and attendees is not None:
         raise RuntimeError("Use either invitees or attendees, not both")
+    if clear_url and url is not None:
+        raise RuntimeError("Use either url or clear_url, not both")
 
     # Writable check: locate the event's calendar via get_event so we refuse
     # edits on read-only calendars. Cheap because the AppleScript scans already.
-    current = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
-    current_data = _parse_json(current)
-    if current_data is None:
-        raise RuntimeError("Event not found")
+    current_data = calendar_get_event(event_id)
     cal_uid = current_data.get("calendar_uid") if isinstance(current_data, dict) else None
     _require_writable_uid(cal_uid)
 
     attendee_values = attendees if attendees is not None else invitees
     invitees_csv = ",".join(_dedupe_emails(attendee_values))
+    native_payload: dict[str, Any] = {
+        "event_id": event_id,
+        "title": title or "",
+        "start": start_norm,
+        "end": end_norm,
+        "location": location or "",
+        "notes": notes or "",
+        "url": url or "",
+        "invitees": _dedupe_emails(attendee_values),
+        "clear_location": clear_location,
+        "clear_notes": clear_notes,
+        "clear_url": clear_url,
+    }
+    if all_day is not None:
+        native_payload["all_day"] = all_day
+    try:
+        data = try_native(
+            "calendar",
+            "update-event",
+            native_payload,
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict) and data.get("uid"):
+        return {"uid": data["uid"], "success": True}
+    if url or clear_url or all_day is not None:
+        raise RuntimeError("calendar_update_event with url or all_day requires the bundled native helper")
+
     raw = run_applescript(
         _UPDATE_EVENT_SCRIPT,
         event_id,
@@ -788,8 +898,7 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     """Delete an event by UID. Requires confirm=True; otherwise returns a preview."""
     if not confirm:
         try:
-            preview_raw = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
-            preview_data = _parse_json(preview_raw)
+            preview_data = calendar_get_event(event_id)
             title = (
                 preview_data.get("title")
                 if isinstance(preview_data, dict)
@@ -802,6 +911,13 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
             "preview": f"Would delete: {label}",
             "confirmed": False,
         }
+
+    try:
+        data = try_native("calendar", "delete-event", {"event_id": event_id}, timeout=20)
+    except NativeProviderUnavailable:
+        data = None
+    if isinstance(data, dict):
+        return {"uid": data.get("uid") or event_id, "success": True}
 
     run_applescript(_DELETE_EVENT_SCRIPT, event_id, timeout=35)
     return {"uid": event_id, "success": True}
@@ -828,8 +944,7 @@ def calendar_find_free_time(
     # but end inside them.
     day_start_iso = datetime.combine(day, datetime.min.time()).isoformat()
     day_end_iso = (datetime.combine(day, datetime.min.time()) + timedelta(days=1)).isoformat()
-    raw = run_applescript(_LIST_EVENTS_SCRIPT, day_start_iso, day_end_iso, "", timeout=35)
-    events = _parse_json(raw) or []
+    events = calendar_list_events(day_start_iso, day_end_iso, "", limit=LIST_EVENTS_MAX_LIMIT)
     if not isinstance(events, list):
         raise RuntimeError("Unexpected events payload")
 
@@ -883,3 +998,108 @@ def calendar_find_free_time(
             )
 
     return free
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Today's Events", readOnlyHint=True))
+def calendar_today(calendar_uid: str | None = None, limit: int = LIST_EVENTS_DEFAULT_LIMIT) -> list[dict]:
+    """List today's calendar events."""
+    start, end = _day_bounds()
+    return calendar_list_events(start, end, calendar_uid=calendar_uid, limit=limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Tomorrow's Events", readOnlyHint=True))
+def calendar_tomorrow(calendar_uid: str | None = None, limit: int = LIST_EVENTS_DEFAULT_LIMIT) -> list[dict]:
+    """List tomorrow's calendar events."""
+    start, end = _day_bounds(offset_days=1)
+    return calendar_list_events(start, end, calendar_uid=calendar_uid, limit=limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="This Week's Events", readOnlyHint=True))
+def calendar_week(calendar_uid: str | None = None, limit: int = LIST_EVENTS_MAX_LIMIT) -> list[dict]:
+    """List events for the next seven days."""
+    start = datetime.combine(datetime.now().date(), datetime.min.time())
+    end = start + timedelta(days=7)
+    return calendar_list_events(start.isoformat(), end.isoformat(), calendar_uid=calendar_uid, limit=limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Events For Date", readOnlyHint=True))
+def calendar_events_for_date(
+    date: str,
+    calendar_uid: str | None = None,
+    limit: int = LIST_EVENTS_DEFAULT_LIMIT,
+) -> list[dict]:
+    """List events for one local date."""
+    start, end = _day_bounds(date)
+    return calendar_list_events(start, end, calendar_uid=calendar_uid, limit=limit)
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Search Calendar", readOnlyHint=True))
+def calendar_search(
+    query: str,
+    start: str | None = None,
+    end: str | None = None,
+    calendar_uid: str | None = None,
+    limit: int = LIST_EVENTS_DEFAULT_LIMIT,
+) -> list[dict]:
+    """Search events by title, location, or notes within a date range."""
+    if start is None:
+        start_norm = datetime.combine(datetime.now().date(), datetime.min.time()).isoformat()
+    else:
+        start_norm = _normalize_calendar_iso(start)
+    if end is None:
+        end_norm = (datetime.fromisoformat(start_norm) + timedelta(days=365)).isoformat()
+    else:
+        end_norm = _normalize_calendar_iso(end)
+    capped = max(1, min(int(limit), LIST_EVENTS_MAX_LIMIT))
+    try:
+        data = try_native(
+            "calendar",
+            "search",
+            {
+                "query": query,
+                "start": start_norm,
+                "end": end_norm,
+                "calendar_uid": calendar_uid or "",
+                "limit": capped,
+            },
+            timeout=20,
+        )
+    except NativeProviderUnavailable:
+        events = calendar_list_events(start_norm, end_norm, calendar_uid=calendar_uid, limit=LIST_EVENTS_MAX_LIMIT)
+        needle = query.casefold()
+        return [
+            ev
+            for ev in events
+            if isinstance(ev, dict)
+            and (
+                needle in str(ev.get("title") or "").casefold()
+                or needle in str(ev.get("location") or "").casefold()
+                or needle in str(ev.get("notes") or "").casefold()
+            )
+        ][:capped]
+    if not isinstance(data, list):
+        raise RuntimeError("Unexpected calendar search payload")
+    return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Create All-Day Event"))
+def calendar_create_all_day_event(
+    title: str,
+    date: str,
+    calendar_uid: str | None = None,
+    location: str | None = None,
+    notes: str | None = None,
+    url: str | None = None,
+) -> dict:
+    """Create an all-day event for one local date."""
+    start, end = _day_bounds(date)
+    return calendar_create_event(
+        title=title,
+        start=start,
+        end=end,
+        calendar_uid=calendar_uid,
+        location=location,
+        notes=notes,
+        url=url,
+        all_day=True,
+    )

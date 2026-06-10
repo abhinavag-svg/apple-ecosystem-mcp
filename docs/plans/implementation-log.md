@@ -45,3 +45,13 @@ This is an append-only tracking file for implementation milestones and future bl
 - Result: 271 passed
 - Cost/token optimization: skipped live macOS tests and full-suite repetition; covered all changed modules and directly affected connector suites
 - Notes for blog: targeted verification was enough because the changed surface was limited to new modules, tool registration, connector discovery outputs, and selected write paths
+
+## 2026-06-10 - V3 Native Provider And Near-Term Features
+
+- Agent/model: V3-A/V3-B `gpt-5.4` medium, V3-C/V3-D/V3-E `gpt-5.4-mini` medium/low
+- Ownership: Swift native helper, Python provider routing, Calendar/Reminders/Contacts workflow tools, initial Notes connector, docs/tests/packaging
+- Files touched: `native/apple-ecosystem-helper.swift`, `src/apple_ecosystem_mcp/native_provider.py`, Calendar/Reminders/Contacts/Notes tools, README/architecture docs, targeted connector tests
+- Tests run: `uv run pytest tests/test_native_provider.py tests/test_server.py tests/tools/test_calendar.py tests/tools/test_reminders.py tests/tools/test_contacts.py tests/tools/test_notes.py -q`; `uv run pytest tests/ -k "not live" -q`; `make build`
+- Result: Swift helper compiled; 123 focused tests passed; 328 non-live tests passed with 8 existing warnings; local MCPB built at `mcpb/apple-ecosystem-mcp.mcpb`
+- Cost/token optimization: kept Mail rewrite out of this batch, used mocked provider responses for unit tests, and limited verification to native provider plus touched connector surfaces
+- Notes for blog: this split keeps reliability work behind stable MCP tool names while moving slow AppleScript paths to native APIs where Apple frameworks exist

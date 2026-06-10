@@ -223,6 +223,45 @@ def test_contacts_get_normalizes_missing_fields(monkeypatch):
     assert record["addresses"] == []
 
 
+def test_contacts_delete_requires_confirmation(monkeypatch):
+    monkeypatch.setattr(contacts, "contacts_get", Mock(return_value={"first": "Ada", "last": "Lovelace"}))
+
+    result = contacts.contacts_delete("C1")
+
+    assert result == {"preview": "Would delete contact: Ada Lovelace", "confirmed": False}
+
+
+def test_contacts_delete_confirmed_uses_native(monkeypatch):
+    native_mock = Mock(return_value={"id": "C1"})
+    monkeypatch.setattr(contacts, "try_native", native_mock)
+
+    assert contacts.contacts_delete("C1", confirm=True) == {"id": "C1", "success": True}
+    assert native_mock.call_args.args[0:3] == ("contacts", "delete", {"contact_id": "C1"})
+
+
+def test_contacts_birthdays_upcoming_uses_native(monkeypatch):
+    native_mock = Mock(
+        return_value=[
+            {
+                "id": "C1",
+                "first": "Ada",
+                "last": "Lovelace",
+                "birthday": "1815-12-10",
+                "emails": [{"label": "home", "value": "ada@example.com"}],
+                "phones": [],
+                "groups": ["Friends"],
+            }
+        ]
+    )
+    monkeypatch.setattr(contacts, "try_native", native_mock)
+
+    result = contacts.contacts_birthdays_upcoming(days=500)
+
+    assert result[0]["email"] == "ada@example.com"
+    assert result[0]["birthday"] == "1815-12-10"
+    assert native_mock.call_args.args[2] == {"mode": "upcoming", "days": 366}
+
+
 def test_contacts_get_normalizes_legacy_string_emails_and_phones(monkeypatch):
     payload = json.dumps(
         {

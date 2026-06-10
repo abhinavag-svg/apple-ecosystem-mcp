@@ -20,6 +20,7 @@ def test_importing_server_registers_all_tool_modules():
     assert "hello_apple" in tools
     # Placeholder tools should register at import time via tools/init.py.
     assert "mail_search" in tools
+    assert "notes_search" in tools
     assert "calendar_list_calendars" in tools
     assert "contacts_search" in tools
     assert "reminders_lists" in tools
@@ -67,6 +68,7 @@ def test_no_tool_definitions_use_varargs_or_kwargs():
     tools_dir = Path(__file__).resolve().parents[1] / "src" / "apple_ecosystem_mcp" / "tools"
     for path in [
         tools_dir / "mail.py",
+        tools_dir / "notes.py",
         tools_dir / "calendar.py",
         tools_dir / "contacts.py",
         tools_dir / "reminders.py",

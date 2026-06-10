@@ -49,9 +49,13 @@ echo ""
 # Build MCPB
 echo "📦 Building MCPB bundle..."
 rm -rf mcpb
+mkdir -p native/build
+swiftc native/apple-ecosystem-helper.swift -o native/build/apple-ecosystem-helper
 mkdir -p mcpb/contents
+mkdir -p mcpb/contents/bin
 cp manifest.json logo.svg README.md LICENSE pyproject.toml uv.lock mcpb/contents/
 cp -r server src mcpb/contents/
+cp native/build/apple-ecosystem-helper mcpb/contents/bin/
 find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
 cd mcpb/contents
 zip -q -r "../apple-ecosystem-mcp.mcpb" .

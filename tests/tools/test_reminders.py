@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from unittest.mock import Mock
 
 import pytest
@@ -254,6 +255,90 @@ def test_reminders_create_resolves_unique_list_name_to_stable_id(monkeypatch):
     assert result == {"id": "R-UUID-NEW", "success": True}
     assert run_mock.call_args.args[2] == "LIST-2"
     assert run_mock.call_args.args[3] == "Work"
+
+
+def test_reminders_create_list_uses_native(monkeypatch):
+    native_mock = Mock(return_value={"id": "L1", "name": "Errands"})
+    monkeypatch.setattr(reminders, "try_native", native_mock)
+
+    assert reminders.reminders_create_list("Errands") == {"id": "L1", "name": "Errands", "success": True}
+    assert native_mock.call_args.args[0:3] == ("reminders", "create-list", {"name": "Errands"})
+
+
+def test_reminders_delete_list_requires_target():
+    result = reminders.reminders_delete_list()
+    assert result["error"] == "missing_target"
+
+
+def test_reminders_delete_list_preview_resolves_friendly_name(monkeypatch):
+    _patch_run(monkeypatch, json.dumps([{"id": "L1", "name": "Errands"}]))
+
+    result = reminders.reminders_delete_list(list_name="Errands")
+
+    assert result == {"preview": "Would delete reminder list: Errands", "confirmed": False}
+
+
+def test_reminders_search_uses_native(monkeypatch):
+    native_mock = Mock(
+        return_value=[
+            {
+                "id": "R1",
+                "title": "Call",
+                "notes": "",
+                "due": "",
+                "priority": 0,
+                "list_name": "Work",
+                "list_id": "L1",
+                "completed": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(reminders, "try_native", native_mock)
+
+    result = reminders.reminders_search("call", limit=500)
+
+    assert result[0]["id"] == "R1"
+    assert result[0]["notes"] is None
+    payload = native_mock.call_args.args[2]
+    assert payload == {"query": "call", "limit": 100, "include_completed": False}
+
+
+def test_reminders_today_filters_native_search_results(monkeypatch):
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 6, 10, tzinfo=tz)
+
+    native_mock = Mock(
+        return_value=[
+            {
+                "id": "today",
+                "title": "Due",
+                "due": "2026-06-10T09:00:00",
+                "completed": False,
+            },
+            {
+                "id": "later",
+                "title": "Later",
+                "due": "2026-06-11T09:00:00",
+                "completed": False,
+            },
+        ]
+    )
+    monkeypatch.setattr(reminders, "try_native", native_mock)
+    monkeypatch.setattr(reminders, "datetime", FixedDatetime)
+
+    assert reminders.reminders_today()[0]["id"] == "today"
+
+
+def test_reminders_update_builds_native_payload(monkeypatch):
+    native_mock = Mock(return_value={"id": "R1"})
+    monkeypatch.setattr(reminders, "try_native", native_mock)
+
+    assert reminders.reminders_update("R1", title="New", priority=99) == {"id": "R1", "success": True}
+    payload = native_mock.call_args.args[2]
+    assert payload["title"] == "New"
+    assert payload["priority"] == 9
 
 
 def test_reminders_create_returns_structured_ambiguous_list_error(monkeypatch):

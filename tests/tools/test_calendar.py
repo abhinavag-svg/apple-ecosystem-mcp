@@ -754,3 +754,67 @@ def test_find_free_time_all_day_event_blocks_window(monkeypatch):
     _mk_run(monkeypatch, json.dumps(events))
     slots = cal.calendar_find_free_time("2026-04-22", duration_minutes=30)
     assert slots == []
+
+
+def test_create_event_sends_url_and_all_day_to_native(monkeypatch):
+    native_mock = Mock(return_value={"uid": "ev-native"})
+    monkeypatch.setattr(cal, "try_native", native_mock)
+    _mk_run(monkeypatch, json.dumps([{"uid": "cal-1", "name": "Work", "writable": True}]))
+
+    out = cal.calendar_create_event(
+        title="OOO",
+        start="2026-06-10",
+        end="2026-06-11",
+        calendar_uid="cal-1",
+        url="https://example.com",
+        all_day=True,
+    )
+
+    assert out == {"uid": "ev-native", "success": True}
+    payload = native_mock.call_args.args[2]
+    assert payload["url"] == "https://example.com"
+    assert payload["all_day"] is True
+
+
+def test_update_event_omits_unspecified_all_day_from_native_payload(monkeypatch):
+    native_mock = Mock(return_value={"uid": "ev-1"})
+    monkeypatch.setattr(cal, "try_native", native_mock)
+    _mk_run(monkeypatch, json.dumps({"uid": "ev-1", "title": "Old", "calendar_uid": "cal-1"}))
+    monkeypatch.setattr(cal, "_require_writable_uid", Mock())
+
+    cal.calendar_update_event("ev-1", title="New")
+
+    payload = native_mock.call_args.args[2]
+    assert "all_day" not in payload
+
+
+def test_calendar_search_falls_back_to_local_filter(monkeypatch):
+    from apple_ecosystem_mcp.native_provider import NativeProviderUnavailable
+
+    def unavailable(*_args, **_kwargs):
+        raise NativeProviderUnavailable("missing")
+
+    monkeypatch.setattr(cal, "try_native", unavailable)
+    monkeypatch.setattr(
+        cal,
+        "calendar_list_events",
+        Mock(
+            return_value=[
+                {"uid": "1", "title": "Budget review", "location": None, "notes": None},
+                {"uid": "2", "title": "Lunch", "location": "Cafe", "notes": None},
+            ]
+        ),
+    )
+
+    assert cal.calendar_search("budget")[0]["uid"] == "1"
+
+
+def test_calendar_create_all_day_event_uses_day_bounds(monkeypatch):
+    create_mock = Mock(return_value={"uid": "ev-1", "success": True})
+    monkeypatch.setattr(cal, "calendar_create_event", create_mock)
+
+    assert cal.calendar_create_all_day_event("OOO", "2026-06-10") == {"uid": "ev-1", "success": True}
+    kwargs = create_mock.call_args.kwargs
+    assert kwargs["start"] == "2026-06-10T00:00:00"
+    assert kwargs["end"] == "2026-06-11T00:00:00"
+    assert kwargs["all_day"] is True

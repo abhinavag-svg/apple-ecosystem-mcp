@@ -12,8 +12,9 @@ from apple_ecosystem_mcp.bridge import clear_inventory_cache
 
 
 @pytest.fixture(autouse=True)
-def clear_caches():
+def clear_caches(monkeypatch):
     """Clear inventory cache before each test to avoid cross-test contamination."""
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_PROVIDER", "applescript")
     clear_inventory_cache()
     yield
     clear_inventory_cache()
