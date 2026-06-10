@@ -160,6 +160,8 @@ def test_notes_read_store_accepts_stable_coredata_id(monkeypatch, tmp_path):
     store_path = tmp_path / "NoteStore.sqlite"
     _create_notes_store(store_path, title="Rome", text="Rome text")
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_NOTES_STORE", str(store_path))
+    # AppleScript fails, so fallback to store
+    monkeypatch.setattr(notes, "run_applescript", Mock(side_effect=RuntimeError("timeout")))
 
     result = notes.notes_read(note_id="x-coredata://ABC/ICNote/p162")
 
