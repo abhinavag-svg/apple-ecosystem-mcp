@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlparse
 
 
 class MailStoreUnavailable(RuntimeError):
@@ -99,6 +99,43 @@ def search_mail_store(search: MailSearchQuery, *, db_path: Path | None = None) -
         conn.row_factory = sqlite3.Row
         _validate_schema(conn)
         return _execute_search(conn, search)
+    except sqlite3.OperationalError as exc:
+        raise MailStoreUnavailable(
+            "mail_store_query_failed",
+            "Mail Envelope Index could not be queried",
+        ) from exc
+    finally:
+        conn.close()
+
+
+def list_mail_store_mailboxes(*, db_path: Path | None = None) -> list[dict[str, Any]]:
+    if not mail_store_enabled():
+        raise MailStoreUnavailable("mail_store_disabled", "Local Mail store provider is disabled")
+
+    path = db_path or default_envelope_index_path()
+    if not path.exists():
+        raise MailStoreUnavailable(
+            "mail_store_unavailable",
+            "Mail Envelope Index was not found",
+        )
+
+    try:
+        db_uri = f"file:{quote(str(path), safe='/')}?mode=ro"
+        conn = sqlite3.connect(db_uri, uri=True)
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        code = (
+            "mail_store_permission_denied"
+            if "permission" in message or "not authorized" in message
+            else "mail_store_unavailable"
+        )
+        raise MailStoreUnavailable(code, "Mail Envelope Index could not be opened") from exc
+
+    try:
+        conn.row_factory = sqlite3.Row
+        _validate_schema(conn)
+        rows = conn.execute("select ROWID as rowid, url from mailboxes order by ROWID asc").fetchall()
+        return [_row_to_mailbox(row) for row in rows]
     except sqlite3.OperationalError as exc:
         raise MailStoreUnavailable(
             "mail_store_query_failed",
@@ -291,6 +328,25 @@ def _mailbox_path(url: str | None) -> str | None:
         return None
     tail = url.rsplit("/", 1)[-1]
     return unquote(tail) if tail else None
+
+
+def _mailbox_account_token(url: str | None) -> str | None:
+    if not url:
+        return None
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _row_to_mailbox(row: sqlite3.Row) -> dict[str, Any]:
+    mailbox_url = _clean_text(row["url"])
+    return {
+        "mailbox_id": mailbox_url or str(row["rowid"]),
+        "mailbox_url": mailbox_url,
+        "mailbox_path": _mailbox_path(mailbox_url),
+        "account_token": _mailbox_account_token(mailbox_url),
+    }
 
 
 def _escape_like(value: str) -> str:

@@ -8,7 +8,12 @@ from typing import Any
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
-from ..mail_store import MailSearchQuery, MailStoreUnavailable, search_mail_store
+from ..mail_store import (
+    MailSearchQuery,
+    MailStoreUnavailable,
+    list_mail_store_mailboxes,
+    search_mail_store,
+)
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -82,8 +87,6 @@ def _can_search_mail_store(
 ) -> bool:
     if "body" in search_fields:
         return False
-    if filters.get("account_name"):
-        return False
     supported_filters = {
         "from_addr",
         "to_addr",
@@ -91,6 +94,7 @@ def _can_search_mail_store(
         "unread",
         "flagged",
         "has_attachments",
+        "account_name",
         "mailbox_ids",
         "provider",
         "mail_provider",
@@ -135,6 +139,267 @@ def _search_with_mail_store(
         cc_addr=filters.get("cc_addr") or None,
     )
     return search_mail_store(search)
+
+
+def _mailbox_inventory() -> list[dict[str, Any]]:
+    try:
+        rows = mail_list_mailboxes()
+    except RuntimeError:
+        return []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _is_recency_style_search(query: str, filters: dict) -> bool:
+    if query.strip():
+        return False
+    mailbox_ids = filters.get("mailbox_ids")
+    return not mailbox_ids or isinstance(mailbox_ids, list)
+
+
+def _group_mailboxes_by_account(
+    inventory: list[dict[str, Any]],
+    *,
+    account_name: str | None = None,
+    inbox_only: bool,
+) -> list[tuple[str, list[dict[str, Any]]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in inventory:
+        account = _nn(item.get("account_name"))
+        path = _nn(item.get("path"))
+        if not account or not path:
+            continue
+        if account_name and str(account) != account_name:
+            continue
+        grouped.setdefault(str(account), []).append(item)
+
+    plans: list[tuple[str, list[dict[str, Any]]]] = []
+    for account, items in grouped.items():
+        candidates = items
+        if inbox_only:
+            inboxes = [item for item in items if item.get("default_candidate")]
+            if inboxes:
+                candidates = inboxes
+        plans.append((account, candidates))
+    return plans
+
+
+def _mail_store_mailboxes_by_account(
+    inventory: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    try:
+        store_mailboxes = list_mail_store_mailboxes()
+    except MailStoreUnavailable:
+        return {}
+
+    inventory_paths: dict[str, set[str]] = {}
+    for account, items in _group_mailboxes_by_account(inventory, inbox_only=False):
+        inventory_paths[account] = {str(item.get("path")) for item in items if item.get("path")}
+
+    token_groups: dict[str, list[dict[str, Any]]] = {}
+    for item in store_mailboxes:
+        token = _nn(item.get("account_token"))
+        path = _nn(item.get("mailbox_path"))
+        if not token or not path:
+            continue
+        token_groups.setdefault(str(token), []).append(item)
+
+    matched: dict[str, list[dict[str, Any]]] = {}
+    for rows in token_groups.values():
+        row_paths = {str(item.get("mailbox_path")) for item in rows if item.get("mailbox_path")}
+        best_account: str | None = None
+        best_score = 0
+        tie = False
+        for account, paths in inventory_paths.items():
+            score = len(row_paths & paths)
+            if score > best_score:
+                best_account = account
+                best_score = score
+                tie = False
+            elif score and score == best_score:
+                tie = True
+        if best_account and best_score > 0 and not tie:
+            matched.setdefault(best_account, []).extend(rows)
+    return matched
+
+
+def _infer_store_account_label(rows: list[dict[str, Any]]) -> str | None:
+    if not rows:
+        return None
+    token = str(rows[0].get("account_token") or "")
+    paths = {str(item.get("mailbox_path") or "") for item in rows}
+    lowered_paths = {path.casefold() for path in paths if path}
+    if token.startswith("local://"):
+        return None
+    if token.startswith("ews://"):
+        return "Hotmail"
+    if token.startswith("imap://"):
+        if "recovered messages (icloud)" in lowered_paths:
+            return "iCloud"
+        if {"inbox", "sent messages", "deleted messages"} & lowered_paths:
+            return "iCloud"
+        return "IMAP"
+    return None
+
+
+def _store_only_mailboxes_by_account() -> dict[str, list[dict[str, Any]]]:
+    try:
+        store_mailboxes = list_mail_store_mailboxes()
+    except MailStoreUnavailable:
+        return {}
+
+    token_groups: dict[str, list[dict[str, Any]]] = {}
+    for item in store_mailboxes:
+        token = _nn(item.get("account_token"))
+        if not token:
+            continue
+        token_groups.setdefault(str(token), []).append(item)
+
+    matched: dict[str, list[dict[str, Any]]] = {}
+    unnamed = 1
+    for rows in token_groups.values():
+        label = _infer_store_account_label(rows)
+        if label is None:
+            continue
+        if label in matched:
+            label = f"{label} {unnamed}"
+            unnamed += 1
+        matched[label] = rows
+    return matched
+
+
+def _sort_mail_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(rows, key=lambda item: str(item.get("date") or ""), reverse=True)
+
+
+def _search_mail_store_scoped(
+    *,
+    query: str,
+    mailbox_id: str | None,
+    limit: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str],
+    filters: dict,
+) -> list[dict[str, Any]]:
+    scoped_account = filters.get("account_name")
+    if not scoped_account and not _is_recency_style_search(query, filters):
+        return _search_with_mail_store(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+        )
+
+    inventory = _mailbox_inventory()
+    explicit_mailbox_ids = filters.get("mailbox_ids")
+    if mailbox_id or explicit_mailbox_ids:
+        return _search_with_mail_store(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+        )
+
+    inbox_only = _is_recency_style_search(query, filters)
+    inventory_groups: dict[str, list[dict[str, Any]]] = {}
+    store_groups: dict[str, list[dict[str, Any]]] = {}
+    if inventory:
+        inventory_groups = dict(
+            _group_mailboxes_by_account(
+                inventory,
+                account_name=scoped_account,
+                inbox_only=False,
+            )
+        )
+        store_groups = _mail_store_mailboxes_by_account(inventory)
+    if not store_groups:
+        store_groups = _store_only_mailboxes_by_account()
+    account_names = [scoped_account] if scoped_account else list(store_groups.keys())
+    if not account_names:
+        return _search_with_mail_store(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+        )
+
+    collected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    per_group_limit = limit
+    if len(account_names) > 1:
+        per_group_limit = max(limit, 10)
+
+    base_filters = dict(filters)
+    base_filters.pop("account_name", None)
+    for account in account_names:
+        store_mailboxes = store_groups.get(account) or []
+        inventory_mailboxes = inventory_groups.get(account) or []
+        if not store_mailboxes:
+            continue
+        if inbox_only:
+            default_paths = {str(item.get("path")) for item in inventory_mailboxes if item.get("default_candidate") and item.get("path")}
+            if not default_paths:
+                default_paths = {
+                    str(item.get("mailbox_path"))
+                    for item in store_mailboxes
+                    if str(item.get("mailbox_path") or "").casefold() == "inbox"
+                }
+            if default_paths:
+                scoped_store_mailboxes = [
+                    item for item in store_mailboxes if str(item.get("mailbox_path")) in default_paths
+                ]
+            else:
+                scoped_store_mailboxes = store_mailboxes
+        else:
+            scoped_store_mailboxes = store_mailboxes
+        if not scoped_store_mailboxes:
+            continue
+        scoped_filters = dict(base_filters)
+        scoped_filters["mailbox_ids"] = [
+            str(item.get("mailbox_url"))
+            for item in scoped_store_mailboxes
+            if item.get("mailbox_url")
+        ]
+        rows = _search_with_mail_store(
+            query=query,
+            mailbox_id=None,
+            limit=per_group_limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=scoped_filters,
+        )
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            row.setdefault("account_name", account)
+            if not row.get("account_name"):
+                row["account_name"] = account
+            key = (str(row.get("id") or ""), str(row.get("internal_id") or ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            collected.append(row)
+    if not collected:
+        return _search_with_mail_store(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+        )
+    return _sort_mail_results(collected)[:limit]
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -647,7 +912,7 @@ def mail_search(
         mailbox_id=mailbox_id,
     ):
         try:
-            data = _search_with_mail_store(
+            data = _search_mail_store_scoped(
                 query=query,
                 mailbox_id=mailbox_id,
                 limit=capped,

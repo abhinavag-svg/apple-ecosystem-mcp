@@ -581,6 +581,7 @@ def test_mail_search_uses_local_store_for_metadata_queries(monkeypatch):
     )
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     monkeypatch.setattr(mail, "search_mail_store", store_mock)
+    monkeypatch.setattr(mail, "mail_list_mailboxes", lambda: [])
 
     result = mail.mail_search("", since="2026-05-28T13:00:00", filters={"unread": True})
 
@@ -596,6 +597,7 @@ def test_mail_search_local_provider_returns_degraded_state(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
     run_mock = Mock(return_value="[]")
     monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(mail, "mail_list_mailboxes", lambda: [])
 
     def unavailable(_search):
         raise mail.MailStoreUnavailable("mail_store_unavailable", "No index")
@@ -619,6 +621,7 @@ def test_mail_search_auto_falls_back_to_applescript_when_store_unavailable(monke
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
     run_mock = Mock(return_value="[]")
     monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(mail, "mail_list_mailboxes", lambda: [])
 
     def unavailable(_search):
         raise mail.MailStoreUnavailable("mail_store_unavailable", "No index")
@@ -640,6 +643,176 @@ def test_mail_search_body_search_stays_on_applescript(monkeypatch):
 
     store_mock.assert_not_called()
     run_mock.assert_called_once()
+
+
+def test_mail_search_local_provider_uses_account_scoped_mailboxes(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(
+        mail,
+        "mail_list_mailboxes",
+        lambda: [
+            {"id": "script-1", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "script-2", "name": "Archive", "account_name": "iCloud", "path": "Archive", "default_candidate": False},
+            {"id": "script-3", "name": "Inbox", "account_name": "Hotmail", "path": "Inbox", "default_candidate": True},
+        ],
+    )
+    monkeypatch.setattr(
+        mail,
+        "list_mail_store_mailboxes",
+        lambda: [
+            {"mailbox_id": "imap://icloud/INBOX", "mailbox_url": "imap://icloud/INBOX", "mailbox_path": "INBOX", "account_token": "imap://icloud"},
+            {"mailbox_id": "imap://icloud/Archive", "mailbox_url": "imap://icloud/Archive", "mailbox_path": "Archive", "account_token": "imap://icloud"},
+            {"mailbox_id": "imap://hotmail/Inbox", "mailbox_url": "imap://hotmail/Inbox", "mailbox_path": "Inbox", "account_token": "imap://hotmail"},
+        ],
+    )
+    seen_queries: list[mail.MailSearchQuery] = []
+
+    def store(search: mail.MailSearchQuery):
+        seen_queries.append(search)
+        return [
+            {
+                "id": "<fairmont@test>",
+                "subject": "Fairmont",
+                "sender": "Fairmont <x@test>",
+                "date": "2026-06-10T17:02:21",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_name": None,
+                "has_attachments": False,
+                "provider": "mail_store",
+            }
+        ]
+
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "search_mail_store", store)
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    result = mail.mail_search("Fairmont", search_fields=["sender", "subject"], filters={"account_name": "iCloud"})
+
+    assert result[0]["account_name"] == "iCloud"
+    assert seen_queries[0].mailbox_ids == ("imap://icloud/INBOX", "imap://icloud/Archive")
+    run_mock.assert_not_called()
+
+
+def test_mail_search_local_recent_across_accounts_uses_default_mailboxes(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(
+        mail,
+        "mail_list_mailboxes",
+        lambda: [
+            {"id": "script-1", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "script-2", "name": "Archive", "account_name": "iCloud", "path": "Archive", "default_candidate": False},
+            {"id": "script-3", "name": "Inbox", "account_name": "Hotmail", "path": "Inbox", "default_candidate": True},
+        ],
+    )
+    monkeypatch.setattr(
+        mail,
+        "list_mail_store_mailboxes",
+        lambda: [
+            {"mailbox_id": "imap://icloud/INBOX", "mailbox_url": "imap://icloud/INBOX", "mailbox_path": "INBOX", "account_token": "imap://icloud"},
+            {"mailbox_id": "imap://icloud/Archive", "mailbox_url": "imap://icloud/Archive", "mailbox_path": "Archive", "account_token": "imap://icloud"},
+            {"mailbox_id": "imap://hotmail/Inbox", "mailbox_url": "imap://hotmail/Inbox", "mailbox_path": "Inbox", "account_token": "imap://hotmail"},
+        ],
+    )
+
+    def store(search: mail.MailSearchQuery):
+        if search.mailbox_ids == ("imap://icloud/INBOX",):
+            return [
+                {
+                    "id": "<fairmont@test>",
+                    "subject": "Fairmont",
+                    "sender": "Fairmont <x@test>",
+                    "date": "2026-06-10T17:02:21",
+                    "preview": "",
+                    "mailbox_id": "imap://icloud/INBOX",
+                    "mailbox_path": "INBOX",
+                    "account_name": None,
+                    "has_attachments": False,
+                    "provider": "mail_store",
+                }
+            ]
+        if search.mailbox_ids == ("imap://hotmail/Inbox",):
+            return [
+                {
+                    "id": "<hotmail@test>",
+                    "subject": "Latest Hotmail",
+                    "sender": "Hotmail <y@test>",
+                    "date": "2026-06-10T16:40:00",
+                    "preview": "",
+                    "mailbox_id": "imap://hotmail/Inbox",
+                    "mailbox_path": "Inbox",
+                    "account_name": None,
+                    "has_attachments": False,
+                    "provider": "mail_store",
+                }
+            ]
+        return []
+
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "search_mail_store", store)
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    result = mail.mail_search("", since="2026-06-10T00:00:00", limit=10)
+
+    assert [item["account_name"] for item in result[:2]] == ["iCloud", "Hotmail"]
+    assert [item["mailbox_path"] for item in result[:2]] == ["INBOX", "Inbox"]
+    run_mock.assert_not_called()
+
+
+def test_mail_search_local_recent_across_accounts_without_inventory_uses_store_labels(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(mail, "mail_list_mailboxes", lambda: [])
+    monkeypatch.setattr(
+        mail,
+        "list_mail_store_mailboxes",
+        lambda: [
+            {"mailbox_id": "imap://icloud/INBOX", "mailbox_url": "imap://icloud/INBOX", "mailbox_path": "INBOX", "account_token": "imap://icloud"},
+            {"mailbox_id": "imap://icloud/Sent%20Messages", "mailbox_url": "imap://icloud/Sent%20Messages", "mailbox_path": "Sent Messages", "account_token": "imap://icloud"},
+            {"mailbox_id": "ews://hotmail/Inbox", "mailbox_url": "ews://hotmail/Inbox", "mailbox_path": "Inbox", "account_token": "ews://hotmail"},
+            {"mailbox_id": "ews://hotmail/Sent%20Items", "mailbox_url": "ews://hotmail/Sent%20Items", "mailbox_path": "Sent Items", "account_token": "ews://hotmail"},
+        ],
+    )
+
+    def store(search: mail.MailSearchQuery):
+        if search.mailbox_ids == ("imap://icloud/INBOX",):
+            return [
+                {
+                    "id": "<icloud@test>",
+                    "subject": "Latest iCloud",
+                    "sender": "iCloud <x@test>",
+                    "date": "2026-06-10T17:02:21",
+                    "preview": "",
+                    "mailbox_id": "imap://icloud/INBOX",
+                    "mailbox_path": "INBOX",
+                    "account_name": None,
+                    "has_attachments": False,
+                    "provider": "mail_store",
+                }
+            ]
+        if search.mailbox_ids == ("ews://hotmail/Inbox",):
+            return [
+                {
+                    "id": "<hotmail@test>",
+                    "subject": "Latest Hotmail",
+                    "sender": "Hotmail <y@test>",
+                    "date": "2026-06-10T16:40:00",
+                    "preview": "",
+                    "mailbox_id": "ews://hotmail/Inbox",
+                    "mailbox_path": "Inbox",
+                    "account_name": None,
+                    "has_attachments": False,
+                    "provider": "mail_store",
+                }
+            ]
+        return []
+
+    monkeypatch.setattr(mail, "search_mail_store", store)
+    monkeypatch.setattr(mail, "run_applescript", Mock(return_value="[]"))
+
+    result = mail.mail_search("", since="2026-06-10T00:00:00", limit=10)
+
+    assert [item["account_name"] for item in result[:2]] == ["iCloud", "Hotmail"]
 
 
 # ---------------------------------------------------------------------------

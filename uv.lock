@@ -38,7 +38,7 @@ wheels = [
 
 [[package]]
 name = "apple-ecosystem-mcp"
-version = "0.6.0"
+version = "0.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "charset-normalizer" },

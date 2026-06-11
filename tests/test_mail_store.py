@@ -8,6 +8,7 @@ import pytest
 from apple_ecosystem_mcp.mail_store import (
     MailSearchQuery,
     MailStoreUnavailable,
+    list_mail_store_mailboxes,
     search_mail_store,
 )
 
@@ -175,6 +176,28 @@ def test_search_mail_store_filters_mailbox(tmp_path):
     )
 
     assert [item["id"] for item in results] == ["<urgent@example.com>"]
+
+
+def test_list_mail_store_mailboxes_returns_urls_and_tokens(tmp_path):
+    db_path = tmp_path / "Envelope Index"
+    _create_mail_store(db_path)
+
+    rows = list_mail_store_mailboxes(db_path=db_path)
+
+    assert rows == [
+        {
+            "mailbox_id": "imap://ACCOUNT/Inbox",
+            "mailbox_url": "imap://ACCOUNT/Inbox",
+            "mailbox_path": "Inbox",
+            "account_token": "imap://ACCOUNT",
+        },
+        {
+            "mailbox_id": "imap://ACCOUNT/Archive",
+            "mailbox_url": "imap://ACCOUNT/Archive",
+            "mailbox_path": "Archive",
+            "account_token": "imap://ACCOUNT",
+        },
+    ]
 
 
 def test_search_mail_store_missing_db_returns_degraded_error(tmp_path):
