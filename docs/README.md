@@ -24,6 +24,7 @@ These are still useful, but they are closer to engineering process than public n
 
 - [session-state.md](./session-state.md) — running handoff state across sessions
 - [TEST_PLAN.md](./TEST_PLAN.md) — test contracts and coverage notes
+- [claude-prompt-dictionary.md](./claude-prompt-dictionary.md) — contributor-facing routing guidance; the runtime contract lives in tool metadata and server behavior, not in packaged docs
 - [plans/](./plans/) — implementation plans, workstream planning, and milestone logs
 
 ## Historical Material

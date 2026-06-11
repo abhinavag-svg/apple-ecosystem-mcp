@@ -11,8 +11,8 @@ mcp = FastMCP("apple-ecosystem")
 
 
 @mcp.tool(
-    description="Return macOS version — smoke test",
-    annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
+    description="Return macOS version as a smoke test for the local Apple Ecosystem server.",
+    annotations=ToolAnnotations(title="Hello Apple", readOnlyHint=True, openWorldHint=False),
 )
 def hello_apple() -> str:
     """Return macOS system version string."""

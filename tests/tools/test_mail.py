@@ -28,6 +28,7 @@ def test_mail_tools_registered():
     tools = _inspect_tools(server.mcp)
     for name in [
         "mail_search",
+        "mail_recent",
         "mail_get_thread",
         "mail_send",
         "mail_create_draft",
@@ -44,8 +45,19 @@ def test_readonly_annotations():
 
     tools = _inspect_tools(server.mcp)
     assert tools["mail_search"].annotations.readOnlyHint is True
+    assert tools["mail_recent"].annotations.readOnlyHint is True
     assert tools["mail_get_thread"].annotations.readOnlyHint is True
     assert tools["mail_list_mailboxes"].annotations.readOnlyHint is True
+
+
+def test_mail_tool_titles_and_descriptions():
+    from apple_ecosystem_mcp import server
+
+    tools = _inspect_tools(server.mcp)
+    assert tools["mail_search"].annotations.title == "Search Mail"
+    assert tools["mail_recent"].annotations.title == "Recent Mail"
+    assert "literal query text" in tools["mail_search"].description
+    assert "chronological order" in tools["mail_recent"].description
 
 
 def test_mail_delete_destructive_annotation():
@@ -125,8 +137,8 @@ def test_mail_search_default_and_argv(monkeypatch):
     args = run_mock.call_args.args
     # argv: query, mailbox_id, since, limit, from_addr, unread, flagged,
     # has_attachments, account_name, search_body, before, mailbox_ids_count,
-    # search_subject, search_sender, to_addr, cc_addr, max_scan_total
-    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800")
+    # search_subject, search_sender, to_addr, cc_addr, max_scan_total, recent_mode
+    assert args[1:] == ("invoice", "", "", "20", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800", "0")
     assert run_mock.call_args.kwargs["timeout"] == 35
 
 
@@ -137,8 +149,8 @@ def test_mail_search_forwards_mailbox_id_and_since(monkeypatch):
     args = run_mock.call_args.args
     # argv: query, mailbox_id, since, limit, from_addr, unread, flagged,
     # has_attachments, account_name, search_body, before, mailbox_ids_count,
-    # search_subject, search_sender, to_addr, cc_addr, max_scan_total
-    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800")
+    # search_subject, search_sender, to_addr, cc_addr, max_scan_total, recent_mode
+    assert args[1:] == ("q", "mb-7", "2026-04-01T00:00:00", "10", "", "", "", "", "", "0", "", "0", "1", "0", "", "", "800", "0")
 
 
 def test_mail_search_caps_at_100(monkeypatch):
@@ -443,6 +455,7 @@ def test_mail_search_subject_field_only(monkeypatch):
 def test_mail_search_script_allows_empty_query_with_filters():
     assert 'if qry is "" and not hasFilters then' in mail._SEARCH_SCRIPT
     assert 'if qry is "" then\n                                    set queryMatch to true' in mail._SEARCH_SCRIPT
+    assert 'if recentMode or unreadStr is not ""' in mail._SEARCH_SCRIPT
 
 
 def test_mail_search_script_honors_subject_field_flag():
@@ -813,6 +826,60 @@ def test_mail_search_local_recent_across_accounts_without_inventory_uses_store_l
     result = mail.mail_search("", since="2026-06-10T00:00:00", limit=10)
 
     assert [item["account_name"] for item in result[:2]] == ["iCloud", "Hotmail"]
+
+
+def test_mail_recent_default_and_argv(monkeypatch):
+    run_mock = Mock(return_value=_search_payload(2))
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    result = mail.mail_recent(limit=5)
+
+    assert len(result) == 2
+    args = run_mock.call_args.args
+    assert args[1:] == ("", "", "", "5", "", "", "", "", "", "0", "", "0", "1", "1", "", "", "200", "1")
+
+
+def test_mail_recent_local_provider_supports_empty_window(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    store_mock = Mock(
+        return_value=[
+            {
+                "id": "<recent@test>",
+                "subject": "Latest",
+                "sender": "a@example.com",
+                "date": "2026-06-11T09:01:57",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "account_name": "iCloud",
+                "has_attachments": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(mail, "_search_mail_store_scoped", store_mock)
+
+    result = mail.mail_recent(limit=3)
+
+    assert result[0]["id"] == "<recent@test>"
+    assert store_mock.call_args.kwargs["query"] == ""
+    assert store_mock.call_args.kwargs["since"] is None
+    assert store_mock.call_args.kwargs["before"] is None
+    run_mock.assert_not_called()
+
+
+def test_mail_recent_auto_falls_back_to_applescript_when_store_unavailable(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    def unavailable(**_kwargs):
+        raise mail.MailStoreUnavailable("mail_store_unavailable", "No index")
+
+    monkeypatch.setattr(mail, "_search_mail_store_scoped", unavailable)
+
+    assert mail.mail_recent(limit=3) == []
+    assert run_mock.call_args.args[-1] == "1"
 
 
 # ---------------------------------------------------------------------------

@@ -20,6 +20,7 @@ def test_importing_server_registers_all_tool_modules():
     assert "hello_apple" in tools
     # Placeholder tools should register at import time via tools/init.py.
     assert "mail_search" in tools
+    assert "mail_recent" in tools
     assert "notes_search" in tools
     assert "calendar_list_calendars" in tools
     assert "contacts_search" in tools
@@ -54,6 +55,7 @@ def test_readonly_and_destructive_annotations_present():
     tools = _inspect_tools(server.mcp)
     assert tools["hello_apple"].annotations.readOnlyHint is True
     assert tools["mail_search"].annotations.readOnlyHint is True
+    assert tools["mail_recent"].annotations.readOnlyHint is True
     assert tools["icloud_delete"].annotations.destructiveHint is True
     assert tools["calendar_delete_event"].annotations.destructiveHint is True
     assert tools["apple_inventory"].annotations.readOnlyHint is True
@@ -62,6 +64,14 @@ def test_readonly_and_destructive_annotations_present():
     assert tools["apple_preferences_remove_alias"].annotations.destructiveHint is True
     assert tools["scheduled_tasks_list"].annotations.readOnlyHint is True
     assert tools["scheduled_tasks_get"].annotations.readOnlyHint is True
+
+
+def test_all_registered_tools_have_titles():
+    from apple_ecosystem_mcp import server
+
+    tools = _inspect_tools(server.mcp)
+    missing = sorted(name for name, tool in tools.items() if not getattr(tool.annotations, "title", None))
+    assert missing == []
 
 
 def test_no_tool_definitions_use_varargs_or_kwargs():

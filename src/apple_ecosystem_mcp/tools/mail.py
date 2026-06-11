@@ -26,6 +26,7 @@ _MAIL_PREVIEW_CHARS = 200
 _MAIL_PROVIDER_AUTO = "auto"
 _MAIL_PROVIDER_LOCAL = "local"
 _MAIL_PROVIDER_APPLESCRIPT = "applescript"
+_MAIL_RECENT_DEFAULT_FIELDS = ["subject", "sender"]
 
 
 def _parse_json(raw: str) -> Any:
@@ -103,6 +104,93 @@ def _can_search_mail_store(
         return False
     effective_filters = [key for key in filters if key not in {"provider", "mail_provider"}]
     return bool(query or effective_filters or since or before or mailbox_id)
+
+
+def _mail_query_impl(
+    query: str,
+    *,
+    mailbox_id: str | None,
+    limit: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str] | None,
+    filters: dict | None,
+    recent_mode: bool,
+) -> list[dict]:
+    query = (query or "").strip()
+    capped = max(1, min(int(limit), _MAIL_SEARCH_MAX))
+
+    filters = filters or {}
+    search_fields = search_fields or ["subject"]
+    search_fields = [field.lower() for field in search_fields]
+    provider_mode = _mail_provider_mode(filters)
+
+    store_capable = _can_search_mail_store(
+        query,
+        search_fields,
+        filters,
+        since=since,
+        before=before,
+        mailbox_id=mailbox_id,
+    )
+    if recent_mode and "body" not in search_fields:
+        store_capable = True
+
+    if provider_mode != _MAIL_PROVIDER_APPLESCRIPT and store_capable:
+        try:
+            data = _search_mail_store_scoped(
+                query=query,
+                mailbox_id=mailbox_id,
+                limit=capped,
+                since=since,
+                before=before,
+                search_fields=search_fields,
+                filters=filters,
+            )
+            return data[:capped]
+        except MailStoreUnavailable as exc:
+            if provider_mode == _MAIL_PROVIDER_LOCAL:
+                return [exc.to_dict()]
+
+    # Build args list for AppleScript
+    args = [
+        query,
+        mailbox_id or "",
+        since or "",
+        str(capped),
+        filters.get("from_addr") or "",
+        "1" if filters.get("unread") is True else ("0" if filters.get("unread") is False else ""),
+        "1" if filters.get("flagged") is True else ("0" if filters.get("flagged") is False else ""),
+        "1" if filters.get("has_attachments") is True else ("0" if filters.get("has_attachments") is False else ""),
+        filters.get("account_name") or "",
+        "1" if "body" in search_fields else "0",
+        before or "",
+    ]
+
+    mailbox_ids = filters.get("mailbox_ids") or []
+    args.append(str(len(mailbox_ids)))
+    args.extend(mailbox_ids)
+
+    args.append("1" if "subject" in search_fields else "0")
+    args.append("1" if "sender" in search_fields else "0")
+    args.append(filters.get("to_addr") or "")
+    args.append(filters.get("cc_addr") or "")
+    max_scan_total = capped * 40
+    if "body" in search_fields:
+        max_scan_total = capped * 15
+    if filters.get("mailbox_ids") or mailbox_id:
+        max_scan_total *= 2
+    args.append(str(max(50, min(max_scan_total, 800))))
+    args.append("1" if recent_mode else "0")
+
+    raw = run_applescript(_SEARCH_SCRIPT, *args, timeout=35)
+    data = _parse_json(raw) or []
+    if not isinstance(data, list):
+        raise RuntimeError("Unexpected mail_search payload shape")
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("preview"), str):
+            item["preview"] = item["preview"][:_MAIL_PREVIEW_CHARS]
+    return data[:capped]
 
 
 def _search_with_mail_store(
@@ -601,10 +689,11 @@ on run argv
     set toAddr to item (mbIdsIdx + 2) of argv
     set ccAddr to item (mbIdsIdx + 3) of argv
     set maxScanTotal to (item (mbIdsIdx + 4) of argv) as integer
+    set recentMode to (item (mbIdsIdx + 5) of argv) is "1"
 
     -- Check if any filters are active
     set hasFilters to false
-    if unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" or toAddr is not "" or ccAddr is not "" or acctNameFilter is not "" or mbIdsCount > 0 then
+    if recentMode or unreadStr is not "" or flaggedStr is not "" or hasAttachStr is not "" or fromAddr is not "" or toAddr is not "" or ccAddr is not "" or acctNameFilter is not "" or mbIdsCount > 0 then
         set hasFilters to true
     end if
 
@@ -883,10 +972,15 @@ def mail_search(
     search_fields: list[str] | None = None,
     filters: dict | None = None,
 ) -> list[dict]:
-    """Search Mail messages with optional filters; returns canonical ids, capped at 100 results.
+    """Search Mail by literal query text or explicit fielded filters.
+
+    Use this tool for keyword-style lookups such as sender, subject, or body
+    search. For chronological retrieval, prefer ``mail_recent`` instead of
+    inventing keywords. If you need a time window here, pass the user's literal
+    query string and constrain it with ``since`` and/or ``before``.
 
     Args:
-        query: Search query string
+        query: Literal search query string. Use an empty string only with explicit filters.
         mailbox_id: Optional single mailbox ID (backward compatibility)
         limit: Result limit (1-100, default 20)
         since: ISO date string for start of date range
@@ -895,75 +989,52 @@ def mail_search(
         filters: Optional dict with keys: from_addr, to_addr, cc_addr, unread (bool),
                  flagged (bool), has_attachments (bool), account_name, mailbox_ids (list)
     """
-    query = (query or "").strip()
-    capped = max(1, min(int(limit), _MAIL_SEARCH_MAX))
-
-    filters = filters or {}
-    search_fields = search_fields or ["subject"]
-
-    search_fields = [field.lower() for field in search_fields]
-    provider_mode = _mail_provider_mode(filters)
-    if provider_mode != _MAIL_PROVIDER_APPLESCRIPT and _can_search_mail_store(
+    return _mail_query_impl(
         query,
-        search_fields,
-        filters,
+        mailbox_id=mailbox_id,
+        limit=limit,
         since=since,
         before=before,
+        search_fields=search_fields,
+        filters=filters,
+        recent_mode=False,
+    )
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Recent Mail", readOnlyHint=True))
+def mail_recent(
+    limit: int = _MAIL_SEARCH_DEFAULT,
+    since: str | None = None,
+    before: str | None = None,
+    mailbox_id: str | None = None,
+    filters: dict | None = None,
+) -> list[dict]:
+    """Return the most recent Mail messages in chronological order.
+
+    Use this tool for recency-style requests such as "latest", "recent",
+    "overnight", or "today". Do not synthesize topic keywords; instead pass
+    explicit ``since`` / ``before`` bounds and optional structured filters such
+    as ``account_name``, ``mailbox_ids``, or ``unread``.
+
+    Args:
+        limit: Result limit (1-100, default 20)
+        since: Optional ISO date string for the start of the window
+        before: Optional ISO date string for the end of the window
+        mailbox_id: Optional single mailbox ID (backward compatibility)
+        filters: Optional dict with keys: unread (bool), flagged (bool),
+                 has_attachments (bool), account_name, mailbox_ids (list),
+                 from_addr, to_addr, cc_addr, provider
+    """
+    return _mail_query_impl(
+        "",
         mailbox_id=mailbox_id,
-    ):
-        try:
-            data = _search_mail_store_scoped(
-                query=query,
-                mailbox_id=mailbox_id,
-                limit=capped,
-                since=since,
-                before=before,
-                search_fields=search_fields,
-                filters=filters,
-            )
-            return data[:capped]
-        except MailStoreUnavailable as exc:
-            if provider_mode == _MAIL_PROVIDER_LOCAL:
-                return [exc.to_dict()]
-
-    # Build args list for AppleScript
-    args = [
-        query,
-        mailbox_id or "",
-        since or "",
-        str(capped),
-        filters.get("from_addr") or "",
-        "1" if filters.get("unread") is True else ("0" if filters.get("unread") is False else ""),
-        "1" if filters.get("flagged") is True else ("0" if filters.get("flagged") is False else ""),
-        "1" if filters.get("has_attachments") is True else ("0" if filters.get("has_attachments") is False else ""),
-        filters.get("account_name") or "",
-        "1" if "body" in search_fields else "0",
-        before or "",
-    ]
-
-    mailbox_ids = filters.get("mailbox_ids") or []
-    args.append(str(len(mailbox_ids)))
-    args.extend(mailbox_ids)
-
-    args.append("1" if "subject" in search_fields else "0")
-    args.append("1" if "sender" in search_fields else "0")
-    args.append(filters.get("to_addr") or "")
-    args.append(filters.get("cc_addr") or "")
-    max_scan_total = capped * 40
-    if "body" in search_fields:
-        max_scan_total = capped * 15
-    if filters.get("mailbox_ids") or mailbox_id:
-        max_scan_total *= 2
-    args.append(str(max(50, min(max_scan_total, 800))))
-
-    raw = run_applescript(_SEARCH_SCRIPT, *args, timeout=35)
-    data = _parse_json(raw) or []
-    if not isinstance(data, list):
-        raise RuntimeError("Unexpected mail_search payload shape")
-    for item in data:
-        if isinstance(item, dict) and isinstance(item.get("preview"), str):
-            item["preview"] = item["preview"][:_MAIL_PREVIEW_CHARS]
-    return data[:capped]
+        limit=limit,
+        since=since,
+        before=before,
+        search_fields=list(_MAIL_RECENT_DEFAULT_FIELDS),
+        filters=filters,
+        recent_mode=True,
+    )
 
 
 # ---------------------------------------------------------------------------
