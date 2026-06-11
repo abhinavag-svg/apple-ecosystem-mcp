@@ -2,6 +2,10 @@
 
 This document exists to make tool use more deterministic.
 
+It is the human-readable companion to the packaged prompt contract in
+`src/apple_ecosystem_mcp/prompt_contract.py`. The runtime contract lives with
+the code; this document is the contributor-facing version.
+
 The core rule is simple:
 
 - Claude should speak in natural language.
