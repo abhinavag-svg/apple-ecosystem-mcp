@@ -510,6 +510,85 @@ def _search_mail_store_scoped(
     return _sort_mail_results(collected)[:limit]
 
 
+def _search_mail_store_with_snapshot_fallback(
+    *,
+    query: str,
+    mailbox_id: str | None,
+    limit: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str],
+    filters: dict,
+    mailbox_inventory_fn: Callable[[], list[dict]] | None,
+) -> list[dict[str, Any]]:
+    try:
+        data = _search_mail_store_scoped(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+            mailbox_inventory_fn=mailbox_inventory_fn,
+        )
+        _logger.debug(
+            "mail_store build=%s version=%s query=%r since=%s before=%s result_count=%s",
+            __build_marker__,
+            __version__,
+            query,
+            since,
+            before,
+            len(data),
+        )
+        return data[:limit]
+    except MailStoreUnavailable as exc:
+        _logger.debug(
+            "mail_store build=%s version=%s query=%r failed code=%s message=%s",
+            __build_marker__,
+            __version__,
+            query,
+            exc.code,
+            str(exc),
+        )
+        snapshot_state = get_mail_snapshot_state()
+        if snapshot_state is not None:
+            snapshot_db_path = snapshot_state.get("snapshot_db_path")
+            if snapshot_db_path:
+                try:
+                    data = _search_mail_store_scoped(
+                        query=query,
+                        mailbox_id=mailbox_id,
+                        limit=limit,
+                        since=since,
+                        before=before,
+                        search_fields=search_fields,
+                        filters=filters,
+                        mailbox_inventory_fn=mailbox_inventory_fn,
+                        db_path=snapshot_db_path,
+                    )
+                    _logger.debug(
+                        "mail_store_snapshot build=%s version=%s query=%r since=%s before=%s result_count=%s",
+                        __build_marker__,
+                        __version__,
+                        query,
+                        since,
+                        before,
+                        len(data),
+                    )
+                    return data[:limit]
+                except MailStoreUnavailable as snapshot_exc:
+                    _logger.debug(
+                        "mail_store_snapshot build=%s version=%s query=%r failed code=%s message=%s",
+                        __build_marker__,
+                        __version__,
+                        query,
+                        snapshot_exc.code,
+                        str(snapshot_exc),
+                    )
+        raise exc
+
+
 def _mail_store_degraded_state(exc: MailStoreUnavailable) -> dict[str, Any]:
     snapshot_state = get_mail_snapshot_state()
     if snapshot_state is not None:
@@ -833,9 +912,9 @@ def _execute_search(
     if recent_mode and "body" not in search_fields:
         store_capable = True
 
-    if provider_mode != MAIL_PROVIDER_APPLESCRIPT and store_capable:
+    if provider_mode == MAIL_PROVIDER_LOCAL and store_capable:
         try:
-            data = _search_mail_store_scoped(
+            return _search_mail_store_with_snapshot_fallback(
                 query=query,
                 mailbox_id=mailbox_id,
                 limit=capped,
@@ -845,78 +924,51 @@ def _execute_search(
                 filters=filters,
                 mailbox_inventory_fn=mailbox_inventory_fn,
             )
-            _logger.debug(
-                "mail_store build=%s version=%s recent_mode=%s query=%r since=%s before=%s result_count=%s",
-                __build_marker__,
-                __version__,
-                recent_mode,
-                query,
-                since,
-                before,
-                len(data),
-            )
-            return data[:capped]
         except MailStoreUnavailable as exc:
-            _logger.debug(
-                "mail_store build=%s version=%s recent_mode=%s query=%r failed code=%s message=%s",
-                __build_marker__,
-                __version__,
-                recent_mode,
-                query,
-                exc.code,
-                str(exc),
-            )
-            snapshot_state = get_mail_snapshot_state()
-            if snapshot_state is not None:
-                snapshot_db_path = snapshot_state.get("snapshot_db_path")
-                if snapshot_db_path:
-                    try:
-                        data = _search_mail_store_scoped(
-                            query=query,
-                            mailbox_id=mailbox_id,
-                            limit=capped,
-                            since=since,
-                            before=before,
-                            search_fields=search_fields,
-                            filters=filters,
-                            mailbox_inventory_fn=mailbox_inventory_fn,
-                            db_path=snapshot_db_path,
-                        )
-                        _logger.debug(
-                            "mail_store_snapshot build=%s version=%s recent_mode=%s query=%r since=%s before=%s result_count=%s",
-                            __build_marker__,
-                            __version__,
-                            recent_mode,
-                            query,
-                            since,
-                            before,
-                            len(data),
-                        )
-                        return data[:capped]
-                    except MailStoreUnavailable as snapshot_exc:
-                        _logger.debug(
-                            "mail_store_snapshot build=%s version=%s recent_mode=%s query=%r failed code=%s message=%s",
-                            __build_marker__,
-                            __version__,
-                            recent_mode,
-                            query,
-                            snapshot_exc.code,
-                            str(snapshot_exc),
-                        )
-            if provider_mode == MAIL_PROVIDER_LOCAL or recent_mode or "body" not in search_fields:
-                return [_mail_store_degraded_state(exc)]
+            return [_mail_store_degraded_state(exc)]
 
-    return _search_mail_applescript_scoped(
-        query=query,
-        mailbox_id=mailbox_id,
-        limit=capped,
-        since=since,
-        before=before,
-        search_fields=search_fields,
-        filters=filters,
-        recent_mode=recent_mode,
-        mailbox_inventory_fn=mailbox_inventory_fn,
-    )
+    try:
+        return _search_mail_applescript_scoped(
+            query=query,
+            mailbox_id=mailbox_id,
+            limit=capped,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+            recent_mode=recent_mode,
+            mailbox_inventory_fn=mailbox_inventory_fn,
+        )
+    except RuntimeError as applescript_exc:
+        if provider_mode == MAIL_PROVIDER_APPLESCRIPT or not store_capable:
+            raise
+        _logger.debug(
+            "mail_applescript build=%s version=%s query=%r failed message=%s; trying local store fallback",
+            __build_marker__,
+            __version__,
+            query,
+            str(applescript_exc),
+        )
+        try:
+            rows = _search_mail_store_with_snapshot_fallback(
+                query=query,
+                mailbox_id=mailbox_id,
+                limit=capped,
+                since=since,
+                before=before,
+                search_fields=search_fields,
+                filters=filters,
+                mailbox_inventory_fn=mailbox_inventory_fn,
+            )
+        except MailStoreUnavailable as store_exc:
+            degraded = _mail_store_degraded_state(store_exc)
+            degraded["applescript_error"] = str(applescript_exc)
+            return [degraded]
+        for row in rows:
+            if isinstance(row, dict):
+                row.setdefault("fallback_provider", "mail_store")
+                row.setdefault("primary_provider_error", str(applescript_exc))
+        return rows[:capped]
 
 
 def search_mail(

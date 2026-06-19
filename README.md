@@ -109,7 +109,7 @@ If a permission is missing, the affected tool should fail with a scoped error ra
 
 ## Tool Families
 
-The server currently exposes 72 tools across:
+The server currently exposes 73 tools across:
 
 - Mail
 - Calendar
@@ -155,13 +155,21 @@ Common fixes:
 APPLE_ECOSYSTEM_MCP_PROVIDER=applescript
 ```
 
-5. Force Mail to stay on AppleScript:
+5. Mail defaults to AppleScript-first auto mode. To inspect Mail access options or open Full Disk Access settings:
+
+```bash
+uv run apple-ecosystem-mcp mail diagnostics --json
+```
+
+In Claude, use `mail_access_setup`.
+
+6. Force Mail to stay on AppleScript:
 
 ```bash
 APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=applescript
 ```
 
-6. Force Mail to use the local metadata provider when testing supported queries:
+7. Force Mail to use the local metadata provider when testing supported queries:
 
 ```bash
 APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=local

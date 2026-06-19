@@ -33,6 +33,7 @@ from ..server import mcp
 # Result-size policy per CLAUDE.md
 _MAIL_BODY_MAX_CHARS = 8_000
 _MAIL_PREVIEW_CHARS = 200
+_FULL_DISK_ACCESS_SETTINGS_URL = "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
 
 
 def _parse_json(raw: str) -> Any:
@@ -358,6 +359,54 @@ def mail_recent(
 def mail_diagnostics() -> dict:
     """Inspect local Apple Mail store availability and access state."""
     return inspect_mail_store()
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Mail Access Setup"))
+def mail_access_setup(open_settings: bool = False) -> dict:
+    """Explain Mail access modes and optionally open Full Disk Access settings."""
+    diagnostics = inspect_mail_store()
+    local_ok = bool(diagnostics.get("ok"))
+    result: dict[str, Any] = {
+        "ok": True,
+        "local_store_access": "available" if local_ok else "unavailable",
+        "diagnostics": diagnostics,
+        "recommended_default": "applescript_first_auto",
+        "modes": [
+            {
+                "mode": "auto",
+                "description": "Try Mail.app AppleScript first; if AppleScript fails, fall back to local Mail store when available.",
+                "requires_full_disk_access": False,
+                "tool_filter": {"provider": "auto"},
+            },
+            {
+                "mode": "applescript",
+                "description": "Use Mail.app Automation only. No Full Disk Access, but chronological and large-mailbox reads are less reliable.",
+                "requires_full_disk_access": False,
+                "tool_filter": {"provider": "applescript"},
+            },
+            {
+                "mode": "local",
+                "description": "Use the local Mail metadata store for deterministic chronological/account-scoped reads.",
+                "requires_full_disk_access": True,
+                "tool_filter": {"provider": "local"},
+            },
+        ],
+        "next_steps": [
+            "Use normal Mail prompts for AppleScript-first auto mode.",
+            "If you do not want Full Disk Access, ask Claude to use AppleScript-only Mail mode.",
+            "If you want deterministic local-store reads, grant Full Disk Access to Claude or create a temporary snapshot from Terminal.",
+        ],
+        "settings_path": "System Settings > Privacy & Security > Full Disk Access",
+        "settings_url": _FULL_DISK_ACCESS_SETTINGS_URL,
+    }
+    if open_settings:
+        try:
+            subprocess.run(["open", _FULL_DISK_ACCESS_SETTINGS_URL], check=True, timeout=5)
+            result["settings_opened"] = True
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+            result["settings_opened"] = False
+            result["settings_error"] = str(exc)
+    return result
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Refresh Mail Snapshot"))

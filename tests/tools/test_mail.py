@@ -33,6 +33,7 @@ def test_mail_tools_registered():
         "mail_search",
         "mail_recent",
         "mail_diagnostics",
+        "mail_access_setup",
         "refresh_mail_snapshot",
         "mail_get_thread",
         "mail_open_message",
@@ -217,6 +218,37 @@ def test_mail_diagnostics_delegates_to_store_inspection(monkeypatch):
 
     assert result == {"ok": True, "provider": "mail_store"}
     inspect_mock.assert_called_once_with()
+
+
+def test_mail_access_setup_reports_modes_without_opening_settings(monkeypatch):
+    inspect_mock = Mock(return_value={"ok": False, "error": "mail_store_permission_denied"})
+    open_mock = Mock()
+    monkeypatch.setattr(mail, "inspect_mail_store", inspect_mock)
+    monkeypatch.setattr(mail.subprocess, "run", open_mock)
+
+    result = mail.mail_access_setup()
+
+    assert result["local_store_access"] == "unavailable"
+    assert result["recommended_default"] == "applescript_first_auto"
+    assert [mode["mode"] for mode in result["modes"]] == ["auto", "applescript", "local"]
+    assert result["settings_path"] == "System Settings > Privacy & Security > Full Disk Access"
+    open_mock.assert_not_called()
+
+
+def test_mail_access_setup_can_open_full_disk_access_settings(monkeypatch):
+    monkeypatch.setattr(mail, "inspect_mail_store", Mock(return_value={"ok": True}))
+    open_mock = Mock()
+    monkeypatch.setattr(mail.subprocess, "run", open_mock)
+
+    result = mail.mail_access_setup(open_settings=True)
+
+    assert result["local_store_access"] == "available"
+    assert result["settings_opened"] is True
+    open_mock.assert_called_once_with(
+        ["open", "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"],
+        check=True,
+        timeout=5,
+    )
 
 
 def test_refresh_mail_snapshot_delegates_to_store_refresh(monkeypatch):
