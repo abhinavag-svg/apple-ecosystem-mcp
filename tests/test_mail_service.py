@@ -120,6 +120,59 @@ def test_search_mail_forwards_fielded_filters(monkeypatch):
     )
 
 
+def test_search_mail_normalizes_from_search_field_alias(monkeypatch):
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+
+    mail_service.search_mail("jobs-noreply@linkedin.com", search_fields=["from"])
+
+    args = run_mock.call_args.args
+    assert args[13] == "0"  # search_subject
+    assert args[14] == "1"  # search_sender
+
+
+def test_recent_mail_auto_normalizes_sender_filter_alias_for_applescript(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    store_mock = Mock(return_value=[])
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "search_mail_store", store_mock)
+
+    result = mail_service.recent_mail(
+        since="2026-06-19T00:00:00",
+        before="2026-06-19T23:59:59",
+        filters={"sender": "jobs-noreply@linkedin.com"},
+        limit=20,
+    )
+
+    assert result == []
+    args = run_mock.call_args.args
+    assert args[5] == "jobs-noreply@linkedin.com"  # from_addr
+    store_mock.assert_not_called()
+
+
+def test_search_mail_normalizes_sender_filter_alias(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    seen = []
+
+    def store(search):
+        seen.append(search)
+        return []
+
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+
+    mail_service.recent_mail(
+        since="2026-06-19T00:00:00",
+        before="2026-06-19T23:59:59",
+        filters={"sender": "jobs-noreply@linkedin.com"},
+    )
+
+    assert seen[0].from_addr == "jobs-noreply@linkedin.com"
+    run_mock.assert_not_called()
+
+
 def test_search_mail_local_provider_uses_store_for_metadata_queries(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
     run_mock = Mock(return_value="[]")

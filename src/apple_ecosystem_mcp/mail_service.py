@@ -57,6 +57,31 @@ def _mail_provider_mode(filters: dict) -> str:
     return MAIL_PROVIDER_AUTO
 
 
+def _normalize_search_fields(search_fields: list[str] | None) -> list[str]:
+    fields = search_fields or ["subject"]
+    normalized: list[str] = []
+    for field in fields:
+        value = str(field).strip().lower()
+        if value in {"from", "from_addr", "sender_email", "sender_name"}:
+            value = "sender"
+        if value and value not in normalized:
+            normalized.append(value)
+    return normalized or ["subject"]
+
+
+def _normalize_mail_filters(filters: dict | None) -> dict:
+    normalized = dict(filters or {})
+    if not normalized.get("from_addr"):
+        for alias in ("sender", "from", "from_email", "sender_email"):
+            value = normalized.get(alias)
+            if value:
+                normalized["from_addr"] = value
+                break
+    for alias in ("sender", "from", "from_email", "sender_email"):
+        normalized.pop(alias, None)
+    return normalized
+
+
 def _can_search_mail_store(
     query: str,
     search_fields: list[str],
@@ -896,9 +921,8 @@ def _execute_search(
     query = (query or "").strip()
     capped = max(1, min(int(limit), MAIL_SEARCH_MAX))
 
-    filters = filters or {}
-    search_fields = search_fields or ["subject"]
-    search_fields = [field.lower() for field in search_fields]
+    filters = _normalize_mail_filters(filters)
+    search_fields = _normalize_search_fields(search_fields)
     provider_mode = _mail_provider_mode(filters)
 
     store_capable = _can_search_mail_store(

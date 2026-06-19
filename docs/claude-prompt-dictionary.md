@@ -102,6 +102,7 @@ Prompt:
 Tool intent:
 - ask a follow-up for the time window first if none was provided
 - then call `mail_search(query="school pickup", since=<resolved-window-start>, before=<resolved-window-end>, filters={"from_addr":"Ankita or resolved email if available"})`
+- Sender aliases are accepted defensively, but prefer `filters={"from_addr": ...}` and `search_fields=["sender"]`; do not use `filters.sender` or `search_fields=["from"]`.
 
 Prompt:
 `Search my mail for receipts from Apple with attachments.`

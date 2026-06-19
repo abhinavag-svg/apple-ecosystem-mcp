@@ -13,4 +13,4 @@ except Exception:  # pragma: no cover
     __version__ = "0.0.0"
 
 # Source-level build marker for bundle/log verification.
-__build_marker__ = "release-prep-0.6.6"
+__build_marker__ = "release-prep-0.6.7"
