@@ -35,6 +35,7 @@ def test_mail_tools_registered():
         "mail_diagnostics",
         "refresh_mail_snapshot",
         "mail_get_thread",
+        "mail_open_message",
         "mail_send",
         "mail_create_draft",
         "mail_list_mailboxes",
@@ -78,6 +79,13 @@ def test_mail_move_message_is_not_marked_destructive():
 
     tools = _inspect_tools(server.mcp)
     assert not tools["mail_move_message"].annotations.destructiveHint
+
+
+def test_mail_open_message_is_not_marked_destructive():
+    from apple_ecosystem_mcp import server
+
+    tools = _inspect_tools(server.mcp)
+    assert not tools["mail_open_message"].annotations.destructiveHint
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +636,67 @@ def test_mail_create_draft_invokes_applescript(monkeypatch):
 def test_mail_create_draft_requires_recipient():
     with pytest.raises(RuntimeError, match="recipient"):
         mail.mail_create_draft(to=[], subject="s", body="b")
+
+
+# ---------------------------------------------------------------------------
+# mail_open_message
+# ---------------------------------------------------------------------------
+
+
+def test_mail_open_message_dry_run_resolves_store_message(monkeypatch):
+    row = {
+        "id": "<m@x>",
+        "subject": "Hello",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+    }
+    monkeypatch.setattr(mail, "get_mail_store_message", Mock(return_value=row))
+    run_mock = Mock()
+    monkeypatch.setattr(mail.subprocess, "run", run_mock)
+
+    result = mail.mail_open_message("177", dry_run=True)
+
+    assert result["opened"] is False
+    assert result["dry_run"] is True
+    assert result["message_id"] == "<m@x>"
+    assert result["url"] == "message://%3Cm%40x%3E"
+    assert result["account_name"] == "iCloud"
+    run_mock.assert_not_called()
+
+
+def test_mail_open_message_opens_message_url(monkeypatch):
+    monkeypatch.setattr(mail, "get_mail_store_message", Mock(return_value=None))
+    run_mock = Mock()
+    monkeypatch.setattr(mail.subprocess, "run", run_mock)
+
+    result = mail.mail_open_message("<m@x>")
+
+    assert result["opened"] is True
+    assert result["url"] == "message://%3Cm%40x%3E"
+    run_mock.assert_called_once_with(["open", "message://%3Cm%40x%3E"], check=True, timeout=5)
+
+
+def test_mail_open_message_returns_unresolved_for_non_rfc_id(monkeypatch):
+    monkeypatch.setattr(mail, "get_mail_store_message", Mock(return_value=None))
+
+    result = mail.mail_open_message("177", dry_run=True)
+
+    assert result["error"] == "message_id_unresolved"
+    assert result["recoverable"] is True
+
+
+def test_mail_open_message_returns_structured_open_failure(monkeypatch):
+    monkeypatch.setattr(mail, "get_mail_store_message", Mock(return_value=None))
+    monkeypatch.setattr(mail.subprocess, "run", Mock(side_effect=OSError("no opener")))
+
+    result = mail.mail_open_message("<m@x>")
+
+    assert result["error"] == "mail_open_failed"
+    assert result["opened"] is False
+    assert result["recoverable"] is True
 
 
 # ---------------------------------------------------------------------------

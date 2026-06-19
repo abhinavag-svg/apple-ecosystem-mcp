@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from typing import Any
+from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
 
@@ -813,6 +815,77 @@ def mail_create_draft(
         raise RuntimeError("Unexpected mail_create_draft payload shape")
     data.setdefault("draft_created", True)
     return data
+
+
+# ---------------------------------------------------------------------------
+# mail_open_message
+# ---------------------------------------------------------------------------
+
+
+def _canonical_message_id_for_open(identifier: str) -> tuple[str | None, dict[str, Any] | None]:
+    needle = (identifier or "").strip()
+    if not needle:
+        return None, None
+    try:
+        row = get_mail_store_message(needle)
+    except MailStoreUnavailable:
+        row = None
+    if row and row.get("id"):
+        return str(row["id"]), row
+    if "@" in needle:
+        return needle, None
+    return None, None
+
+
+def _mail_message_url(message_id: str) -> str:
+    return "message://" + quote(message_id, safe="")
+
+
+@mcp.tool(annotations=ToolAnnotations(title="Open Mail Message"))
+def mail_open_message(message_id: str, dry_run: bool = False) -> dict:
+    """Open a Mail message in Mail.app by canonical or store-resolvable id."""
+    canonical_id, row = _canonical_message_id_for_open(message_id)
+    if not canonical_id:
+        return {
+            "error": "message_id_unresolved",
+            "message": "Message could not be resolved to a canonical RFC Message-ID for Mail.app opening.",
+            "recoverable": True,
+            "message_id": message_id,
+        }
+
+    url = _mail_message_url(canonical_id)
+    result: dict[str, Any] = {
+        "opened": False,
+        "message_id": canonical_id,
+        "url": url,
+    }
+    if row:
+        result.update(
+            {
+                "subject": row.get("subject", ""),
+                "sender": row.get("sender", ""),
+                "date": row.get("date", ""),
+                "account_name": row.get("account_name"),
+                "mailbox_id": row.get("mailbox_id"),
+                "mailbox_path": row.get("mailbox_path"),
+            }
+        )
+    if dry_run:
+        result["dry_run"] = True
+        return result
+
+    try:
+        subprocess.run(["open", url], check=True, timeout=5)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        return {
+            **result,
+            "error": "mail_open_failed",
+            "message": str(exc),
+            "recoverable": True,
+        }
+
+    result["opened"] = True
+    return result
 
 
 # ---------------------------------------------------------------------------

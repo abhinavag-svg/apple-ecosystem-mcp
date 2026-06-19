@@ -23,6 +23,7 @@ def test_importing_server_registers_all_tool_modules():
     assert "mail_recent" in tools
     assert "mail_diagnostics" in tools
     assert "refresh_mail_snapshot" in tools
+    assert "mail_open_message" in tools
     assert "notes_search" in tools
     assert "calendar_list_calendars" in tools
     assert "contacts_search" in tools

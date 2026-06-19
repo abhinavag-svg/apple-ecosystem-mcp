@@ -169,6 +169,8 @@ Concrete test cases:
 - `mail_get_thread()` returns canonical message ID and mailbox/account metadata
 - `mail_get_thread(include_body=False)` omits body content and returns metadata only
 - `mail_get_thread()` returns plain-text body only
+- `mail_open_message()` resolves canonical or store-backed message IDs to a Mail.app `message://` URL
+- `mail_open_message(dry_run=True)` returns the URL and message metadata without opening Mail.app
 - HTML fallback is stripped to text if plain text is absent
 - inline base64 or HTML-heavy content is excluded from result payloads
 - body content is truncated at 8,000 characters with truncation marker

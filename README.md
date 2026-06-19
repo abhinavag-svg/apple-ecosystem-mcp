@@ -109,7 +109,7 @@ If a permission is missing, the affected tool should fail with a scoped error ra
 
 ## Tool Families
 
-The server currently exposes 71 tools across:
+The server currently exposes 72 tools across:
 
 - Mail
 - Calendar

@@ -14,6 +14,7 @@ import pytest
 from apple_ecosystem_mcp.tools.mail import (
     mail_get_thread,
     mail_list_mailboxes,
+    mail_open_message,
     mail_recent,
     mail_search,
 )
@@ -115,6 +116,11 @@ def test_recent_icloud_inbox_last_10_hours(monkeypatch):
     assert thread["account_name"] == "iCloud"
     assert str(thread.get("mailbox_path")).casefold() == "inbox"
     assert "body" not in thread
+
+    opener = mail_open_message(str(results[0]["id"]), dry_run=True)
+    assert opener["message_id"] == results[0]["id"]
+    assert opener["url"].startswith("message://")
+    assert opener["opened"] is False
 
 
 def test_get_thread():
