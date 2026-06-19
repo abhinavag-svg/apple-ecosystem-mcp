@@ -153,6 +153,7 @@ def test_search_mail_local_provider_uses_store_for_metadata_queries(monkeypatch)
 def test_search_mail_local_provider_returns_degraded_state(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
     monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+    monkeypatch.setattr(mail_service, "get_mail_snapshot_state", Mock(return_value=None))
 
     def unavailable(_search):
         raise MailStoreUnavailable("mail_store_unavailable", "No index")
@@ -163,15 +164,17 @@ def test_search_mail_local_provider_returns_degraded_state(monkeypatch):
 
     assert result == [
         {
-            "error": "mail_store_unavailable",
-            "message": "No index",
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
             "recoverable": True,
             "provider": "mail_store",
+            "live_error": "mail_store_unavailable",
+            "snapshot_available": False,
         }
     ]
 
 
-def test_search_mail_auto_falls_back_to_applescript_when_store_unavailable(monkeypatch):
+def test_search_mail_auto_returns_degraded_state_when_store_unavailable(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
     run_mock = Mock(return_value="[]")
     monkeypatch.setattr(mail_service, "run_applescript", run_mock)
@@ -180,9 +183,92 @@ def test_search_mail_auto_falls_back_to_applescript_when_store_unavailable(monke
         raise MailStoreUnavailable("mail_store_unavailable", "No index")
 
     monkeypatch.setattr(mail_service, "search_mail_store", unavailable)
+    monkeypatch.setattr(mail_service, "get_mail_snapshot_state", Mock(return_value=None))
 
-    assert mail_service.search_mail("", since="2026-05-28T13:00:00") == []
-    run_mock.assert_called_once()
+    assert mail_service.search_mail("", since="2026-05-28T13:00:00") == [
+        {
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": "mail_store_unavailable",
+            "snapshot_available": False,
+        }
+    ]
+    run_mock.assert_not_called()
+
+
+def test_search_mail_permission_denied_returns_guidance(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+    monkeypatch.setattr(mail_service, "get_mail_snapshot_state", Mock(return_value=None))
+
+    def unavailable(_search):
+        raise MailStoreUnavailable("mail_store_permission_denied", "Denied")
+
+    monkeypatch.setattr(mail_service, "search_mail_store", unavailable)
+
+    assert mail_service.search_mail("", since="2026-05-28T13:00:00") == [
+        {
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": "mail_store_permission_denied",
+            "snapshot_available": False,
+            "next_step": "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime.",
+            "settings_path": "System Settings > Privacy & Security > Full Disk Access",
+        }
+    ]
+
+
+def test_search_mail_uses_snapshot_when_live_store_unavailable(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(
+        mail_service,
+        "get_mail_snapshot_state",
+        Mock(return_value={"snapshot_db_path": "/tmp/mail-snapshot/Envelope Index"}),
+    )
+    monkeypatch.setattr(
+        mail_service,
+        "list_mail_store_mailboxes",
+        lambda db_path=None: [
+            {
+                "mailbox_id": "imap://ACCOUNT/Inbox",
+                "mailbox_url": "imap://ACCOUNT/Inbox",
+                "mailbox_path": "Inbox",
+                "account_token": "imap://ACCOUNT",
+            }
+        ],
+    )
+    calls = []
+
+    def store(search, db_path=None):
+        calls.append(db_path)
+        if db_path is None:
+            raise MailStoreUnavailable("mail_store_unavailable", "No live index")
+        return [
+            {
+                "id": "<snapshot@test>",
+                "subject": "Snapshot",
+                "sender": "a@example.com",
+                "date": "2026-05-28T13:30:00",
+                "preview": "",
+                "mailbox_id": "imap://ACCOUNT/Inbox",
+                "account_name": None,
+                "has_attachments": False,
+            }
+        ]
+
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+
+    result = mail_service.search_mail("", since="2026-05-28T13:00:00")
+
+    assert result[0]["id"] == "<snapshot@test>"
+    assert calls == [None, "/tmp/mail-snapshot/Envelope Index"]
+    run_mock.assert_not_called()
 
 
 def test_search_mail_body_search_stays_on_applescript(monkeypatch):
@@ -193,6 +279,19 @@ def test_search_mail_body_search_stays_on_applescript(monkeypatch):
     monkeypatch.setattr(mail_service, "search_mail_store", store_mock)
 
     assert mail_service.search_mail("receipt", search_fields=["body"]) == []
+
+    store_mock.assert_not_called()
+    run_mock.assert_called_once()
+
+
+def test_search_mail_explicit_applescript_provider_bypasses_store(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    store_mock = Mock(return_value=[])
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "search_mail_store", store_mock)
+
+    assert mail_service.search_mail("invoice", filters={"provider": "applescript"}) == []
 
     store_mock.assert_not_called()
     run_mock.assert_called_once()
@@ -261,6 +360,163 @@ def test_search_mail_local_account_scoping_uses_inventory_callback(monkeypatch):
     assert seen[0].mailbox_ids == ("imap://icloud/INBOX", "imap://icloud/Archive")
 
 
+def test_search_mail_account_scope_requires_inventory(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(
+        mail_service,
+        "list_mail_store_mailboxes",
+        lambda db_path=None: [
+            {
+                "mailbox_id": "imap://hotmail/Inbox",
+                "mailbox_url": "imap://hotmail/Inbox",
+                "mailbox_path": "Inbox",
+                "account_token": "imap://hotmail",
+                "account_name": "Abhinav Hotmail",
+            },
+        ],
+    )
+    monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+
+    result = mail_service.recent_mail(
+        since="2026-06-11T00:00:00",
+        filters={"account_name": "iCloud"},
+        mailbox_inventory_fn=lambda: [],
+    )
+
+    assert result[0]["error"] == "mail_snapshot_required"
+    assert result[0]["live_error"] == "mail_account_scope_unavailable"
+
+
+def test_search_mail_account_scope_uses_store_account_names_without_inventory(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(
+        mail_service,
+        "list_mail_store_mailboxes",
+        lambda db_path=None: [
+            {
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_url": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_token": "imap://icloud",
+                "account_name": "iCloud",
+            },
+            {
+                "mailbox_id": "ews://hotmail/Inbox",
+                "mailbox_url": "ews://hotmail/Inbox",
+                "mailbox_path": "Inbox",
+                "account_token": "ews://hotmail",
+                "account_name": "Abhinav Hotmail",
+            },
+        ],
+    )
+    seen = []
+
+    def store(search):
+        seen.append(search)
+        return [
+            {
+                "id": "<icloud@test>",
+                "subject": "Scoped",
+                "sender": "x@example.com",
+                "date": "2026-06-11T15:00:25",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_name": "iCloud",
+                "has_attachments": False,
+                "provider": "mail_store",
+            }
+        ]
+
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+    monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+
+    result = mail_service.recent_mail(
+        since="2026-06-11T00:00:00",
+        filters={"account_name": "iCloud"},
+        mailbox_inventory_fn=lambda: [],
+    )
+
+    assert result[0]["id"] == "<icloud@test>"
+    assert seen[0].mailbox_ids == ("imap://icloud/INBOX",)
+
+
+def test_search_mail_resolves_friendly_mailbox_ids_within_scoped_account(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    monkeypatch.setattr(
+        mail_service,
+        "list_mail_store_mailboxes",
+        lambda db_path=None: [
+            {
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_url": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_token": "imap://icloud",
+            },
+            {
+                "mailbox_id": "ews://hotmail/Inbox",
+                "mailbox_url": "ews://hotmail/Inbox",
+                "mailbox_path": "Inbox",
+                "account_token": "ews://hotmail",
+            },
+        ],
+    )
+    seen = []
+
+    def store(search):
+        seen.append(search)
+        return [
+            {
+                "id": "<icloud@test>",
+                "subject": "Scoped",
+                "sender": "x@example.com",
+                "date": "2026-06-11T15:00:25",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_name": None,
+                "has_attachments": False,
+                "provider": "mail_store",
+            }
+        ]
+
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+    monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+
+    result = mail_service.search_mail(
+        "",
+        since="2026-06-11T00:00:00",
+        filters={"account_name": "iCloud", "mailbox_ids": ["INBOX"]},
+        mailbox_inventory_fn=lambda: [
+            {"id": "script-1", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "script-2", "name": "Inbox", "account_name": "Hotmail", "path": "Inbox", "default_candidate": True},
+        ],
+    )
+
+    assert seen[0].mailbox_ids == ("imap://icloud/INBOX",)
+    assert result[0]["account_name"] == "iCloud"
+
+
+def test_search_mail_preserves_canonical_store_mailbox_ids(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    seen = []
+
+    def store(search):
+        seen.append(search)
+        return []
+
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+    monkeypatch.setattr(mail_service, "run_applescript", Mock(return_value="[]"))
+
+    mail_service.search_mail(
+        "",
+        filters={"account_name": "iCloud", "mailbox_ids": ["imap://icloud/INBOX"]},
+        mailbox_inventory_fn=lambda: [],
+    )
+
+    assert seen[0].mailbox_ids == ("imap://icloud/INBOX",)
+
+
 def test_recent_mail_uses_local_store_without_query(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
     run_mock = Mock(return_value="[]")
@@ -288,3 +544,185 @@ def test_recent_mail_uses_local_store_without_query(monkeypatch):
     assert store_mock.call_args.kwargs["since"] is None
     assert store_mock.call_args.kwargs["before"] is None
     run_mock.assert_not_called()
+
+
+def test_recent_mail_applescript_scopes_per_account_inboxes(monkeypatch):
+    calls = []
+
+    def run(script, *args, timeout):
+        calls.append((args, timeout))
+        account = args[8]
+        payload = [
+            {
+                "id": f"<{account.lower()}@test>",
+                "subject": account,
+                "sender": f"{account.lower()}@example.com",
+                "date": "2026-06-11T09:01:57",
+                "preview": "",
+                "mailbox_id": args[12],
+                "account_name": account,
+                "has_attachments": False,
+            }
+        ]
+        return json.dumps(payload)
+
+    monkeypatch.setattr(mail_service, "run_applescript", run)
+
+    result = mail_service.recent_mail(
+        limit=5,
+        since="2026-06-11T00:00:00",
+        mailbox_inventory_fn=lambda: [
+            {"id": "icloud-inbox", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "icloud-archive", "name": "Archive", "account_name": "iCloud", "path": "Archive", "default_candidate": False},
+            {"id": "hotmail-inbox", "name": "Inbox", "account_name": "Hotmail", "path": "Inbox", "default_candidate": True},
+        ],
+    )
+
+    assert [item["account_name"] for item in result] == ["iCloud", "Hotmail"]
+    assert len(calls) == 4
+    assert calls[0][0][8] == "iCloud"
+    assert calls[0][0][11] == "1"
+    assert calls[0][0][12] == "icloud-inbox"
+    assert calls[0][0][5] == "1"
+    assert calls[0][1] == 12
+    assert calls[1][0][5] == "0"
+    assert calls[2][0][8] == "Hotmail"
+    assert calls[2][0][12] == "hotmail-inbox"
+    assert calls[2][0][5] == "1"
+    assert calls[3][0][5] == "0"
+
+
+def test_recent_mail_applescript_returns_partial_results_after_one_timeout(monkeypatch):
+    calls = []
+
+    def run(script, *args, timeout):
+        calls.append((args, timeout))
+        account = args[8]
+        unread_flag = args[5]
+        if account == "Hotmail":
+            raise RuntimeError("AppleScript timed out")
+        return json.dumps(
+            [
+                {
+                    "id": f"<icloud-{unread_flag}@test>",
+                    "subject": f"iCloud-{unread_flag}",
+                    "sender": "icloud@example.com",
+                    "date": "2026-06-11T09:01:57",
+                    "preview": "",
+                    "mailbox_id": "icloud-inbox",
+                    "account_name": "iCloud",
+                    "has_attachments": False,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(mail_service, "run_applescript", run)
+
+    result = mail_service.recent_mail(
+        limit=5,
+        since="2026-06-11T00:00:00",
+        mailbox_inventory_fn=lambda: [
+            {"id": "icloud-inbox", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "hotmail-inbox", "name": "Inbox", "account_name": "Hotmail", "path": "Inbox", "default_candidate": True},
+        ],
+    )
+
+    assert result == [
+        {
+            "id": "<icloud-1@test>",
+            "subject": "iCloud-1",
+            "sender": "icloud@example.com",
+            "date": "2026-06-11T09:01:57",
+            "preview": "",
+            "mailbox_id": "icloud-inbox",
+            "account_name": "iCloud",
+            "has_attachments": False,
+        }
+        ,
+        {
+            "id": "<icloud-0@test>",
+            "subject": "iCloud-0",
+            "sender": "icloud@example.com",
+            "date": "2026-06-11T09:01:57",
+            "preview": "",
+            "mailbox_id": "icloud-inbox",
+            "account_name": "iCloud",
+            "has_attachments": False,
+        }
+    ]
+    assert len(calls) == 6
+    assert calls[4][0][8] == "Hotmail"
+    assert calls[4][0][11] == "0"
+
+
+def test_recent_mail_applescript_retries_account_only_when_mailbox_scoped_empty(monkeypatch):
+    calls = []
+
+    def run(script, *args, timeout):
+        calls.append((args, timeout))
+        mailbox_count = args[11]
+        unread_flag = args[5]
+        if mailbox_count == "1":
+            return "[]"
+        return json.dumps(
+            [
+                {
+                    "id": f"<account-only-{unread_flag}@test>",
+                    "subject": f"account-only-{unread_flag}",
+                    "sender": "icloud@example.com",
+                    "date": "2026-06-11T09:01:57",
+                    "preview": "",
+                    "mailbox_id": "fallback",
+                    "account_name": "iCloud",
+                    "has_attachments": False,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(mail_service, "run_applescript", run)
+
+    result = mail_service.recent_mail(
+        limit=5,
+        since="2026-06-11T00:00:00",
+        filters={"account_name": "iCloud"},
+        mailbox_inventory_fn=lambda: [
+            {"id": "icloud-inbox", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            {"id": "icloud-archive", "name": "Archive", "account_name": "iCloud", "path": "Archive", "default_candidate": False},
+        ],
+    )
+
+    assert [item["id"] for item in result] == ["<account-only-1@test>", "<account-only-0@test>"]
+    assert len(calls) == 4
+    assert calls[0][0][11] == "1"
+    assert calls[2][0][11] == "0"
+
+
+def test_search_mail_applescript_prefilters_sender_candidates(monkeypatch):
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+
+    mail_service.search_mail(
+        "school pickup",
+        filters={"from_addr": "Ankita"},
+        since="2026-06-11T00:00:00",
+    )
+
+    args = run_mock.call_args.args
+    assert args[5] == "Ankita"
+
+
+def test_recent_mail_applescript_re_raises_timeout_when_every_account_fails(monkeypatch):
+    monkeypatch.setattr(
+        mail_service,
+        "run_applescript",
+        Mock(side_effect=RuntimeError("AppleScript timed out")),
+    )
+
+    with pytest.raises(RuntimeError, match="timed out"):
+        mail_service.recent_mail(
+            limit=5,
+            since="2026-06-11T00:00:00",
+            mailbox_inventory_fn=lambda: [
+                {"id": "icloud-inbox", "name": "INBOX", "account_name": "iCloud", "path": "INBOX", "default_candidate": True},
+            ],
+        )

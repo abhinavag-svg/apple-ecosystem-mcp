@@ -1,11 +1,13 @@
 .PHONY: help install test build release clean
 
+BUNDLE_ROOT_FILES = manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock
+
 help:
 	@echo "Apple Ecosystem MCP"
 	@echo ""
 	@echo "  make install          Install Python dependencies"
 	@echo "  make test             Run non-live tests"
-	@echo "  make build            Build local MCPB bundle"
+	@echo "  make build            Build local DXT and MCPB bundles"
 	@echo "  make release VERSION=X.Y.Z"
 	@echo "  make clean            Remove generated artifacts"
 	@echo ""
@@ -22,12 +24,15 @@ build:
 	swiftc native/apple-ecosystem-helper.swift -o native/build/apple-ecosystem-helper
 	mkdir -p mcpb/contents
 	mkdir -p mcpb/contents/bin
-	cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock mcpb/contents/
+	cp $(BUNDLE_ROOT_FILES) mcpb/contents/
 	cp -r server src mcpb/contents/
 	cp native/build/apple-ecosystem-helper mcpb/contents/bin/
+	find mcpb/contents -name .DS_Store -delete
 	find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
-	cd mcpb/contents && zip -q -r ../apple-ecosystem-mcp.mcpb .
+	cd mcpb/contents && zip -X -q -r ../apple-ecosystem-mcp.mcpb .
+	cd mcpb/contents && zip -X -q -r ../apple-ecosystem-mcp.dxt .
 	@ls -lh mcpb/apple-ecosystem-mcp.mcpb
+	@ls -lh mcpb/apple-ecosystem-mcp.dxt
 
 release:
 	@test -n "$(VERSION)" || (echo "Usage: make release VERSION=X.Y.Z" && exit 1)

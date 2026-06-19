@@ -14,6 +14,7 @@ import pytest
 from apple_ecosystem_mcp.tools.mail import (
     mail_get_thread,
     mail_list_mailboxes,
+    mail_recent,
     mail_search,
 )
 
@@ -95,6 +96,27 @@ def test_search_date_range():
     assert isinstance(results, list)
 
 
+def test_recent_icloud_inbox_last_10_hours(monkeypatch):
+    """Exercise deterministic local-store account and inbox scoping."""
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    since = (datetime.now().astimezone() - timedelta(hours=10)).isoformat(timespec="seconds")
+    results = mail_recent(limit=10, since=since, filters={"account_name": "iCloud"})
+    if results and isinstance(results[0], dict) and results[0].get("error"):
+        pytest.skip(f"Local Mail store unavailable: {results[0].get('live_error') or results[0].get('error')}")
+    if not results:
+        pytest.skip("No iCloud inbox messages in the last 10 hours")
+
+    assert {email.get("account_name") for email in results} == {"iCloud"}
+    assert {str(email.get("mailbox_path")).casefold() for email in results} == {"inbox"}
+
+    thread = mail_get_thread(str(results[0]["id"]), include_body=False)
+    assert isinstance(thread, dict)
+    assert thread["id"] == results[0]["id"]
+    assert thread["account_name"] == "iCloud"
+    assert str(thread.get("mailbox_path")).casefold() == "inbox"
+    assert "body" not in thread
+
+
 def test_get_thread():
     """Exercise thread fetching for a locally discoverable message."""
     results = mail_search("the", limit=1)
@@ -105,7 +127,7 @@ def test_get_thread():
     assert message_id
 
     try:
-        thread = mail_get_thread(message_id)
+        thread = mail_get_thread(message_id, include_body=False)
     except RuntimeError as exc:
         if "timed out" in str(exc):
             pytest.skip("Mail.app thread integration timed out on local mailbox data")
@@ -113,5 +135,5 @@ def test_get_thread():
             pytest.skip("Selected Mail message could not be resolved back to a thread")
         raise
 
-    assert isinstance(thread, str)
-    assert thread
+    assert isinstance(thread, dict)
+    assert thread.get("id")

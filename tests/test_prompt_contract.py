@@ -14,6 +14,7 @@ def test_tool_contract_lookup_returns_mail_metadata():
     assert tool_contract("mail_search") == MAIL_SEARCH_CONTRACT
     assert tool_contract("mail_recent") == MAIL_RECENT_CONTRACT
     assert "literal query text" in MAIL_SEARCH_CONTRACT.description
+    assert "ask a follow-up" in MAIL_SEARCH_CONTRACT.description
     assert "chronological order" in MAIL_RECENT_CONTRACT.description
 
 

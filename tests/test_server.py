@@ -21,6 +21,8 @@ def test_importing_server_registers_all_tool_modules():
     # Placeholder tools should register at import time via tools/init.py.
     assert "mail_search" in tools
     assert "mail_recent" in tools
+    assert "mail_diagnostics" in tools
+    assert "refresh_mail_snapshot" in tools
     assert "notes_search" in tools
     assert "calendar_list_calendars" in tools
     assert "contacts_search" in tools
@@ -56,6 +58,7 @@ def test_readonly_and_destructive_annotations_present():
     assert tools["hello_apple"].annotations.readOnlyHint is True
     assert tools["mail_search"].annotations.readOnlyHint is True
     assert tools["mail_recent"].annotations.readOnlyHint is True
+    assert tools["mail_diagnostics"].annotations.readOnlyHint is True
     assert tools["icloud_delete"].annotations.destructiveHint is True
     assert tools["calendar_delete_event"].annotations.destructiveHint is True
     assert tools["apple_inventory"].annotations.readOnlyHint is True

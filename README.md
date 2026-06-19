@@ -167,11 +167,13 @@ APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=applescript
 APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=local
 ```
 
-## Development Notes
+## Contributor Notes
 
-- Main architecture: [docs/architecture.md](./docs/architecture.md)
-- Current handoff state: [docs/session-state.md](./docs/session-state.md)
-- Release plans and implementation notes: [docs/plans](./docs/plans/)
+For contributors and maintainers:
+
+- Architecture: [docs/architecture.md](./docs/architecture.md)
+- Prompt-routing reference: [docs/claude-prompt-dictionary.md](./docs/claude-prompt-dictionary.md)
+- Broader project docs: [docs/README.md](./docs/README.md)
 
 ## License
 

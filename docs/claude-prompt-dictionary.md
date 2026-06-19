@@ -100,7 +100,8 @@ Prompt:
 `Find emails from Ankita about school pickup.`
 
 Tool intent:
-- `mail_search(query="school pickup", filters={"from_addr":"Ankita or resolved email if available"})`
+- ask a follow-up for the time window first if none was provided
+- then call `mail_search(query="school pickup", since=<resolved-window-start>, before=<resolved-window-end>, filters={"from_addr":"Ankita or resolved email if available"})`
 
 Prompt:
 `Search my mail for receipts from Apple with attachments.`

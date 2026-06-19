@@ -6,6 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from apple_ecosystem_mcp import mail_service
+from apple_ecosystem_mcp.mail_store import MailStoreUnavailable
 from apple_ecosystem_mcp.prompt_contract import MAIL_RECENT_CONTRACT, MAIL_SEARCH_CONTRACT
 from apple_ecosystem_mcp.tools import mail
 
@@ -31,6 +32,8 @@ def test_mail_tools_registered():
     for name in [
         "mail_search",
         "mail_recent",
+        "mail_diagnostics",
+        "refresh_mail_snapshot",
         "mail_get_thread",
         "mail_send",
         "mail_create_draft",
@@ -48,6 +51,7 @@ def test_readonly_annotations():
     tools = _inspect_tools(server.mcp)
     assert tools["mail_search"].annotations.readOnlyHint is True
     assert tools["mail_recent"].annotations.readOnlyHint is True
+    assert tools["mail_diagnostics"].annotations.readOnlyHint is True
     assert tools["mail_get_thread"].annotations.readOnlyHint is True
     assert tools["mail_list_mailboxes"].annotations.readOnlyHint is True
 
@@ -86,6 +90,7 @@ def test_mail_list_mailboxes_returns_shape(monkeypatch):
         {"name": "INBOX", "id": "1A", "account_name": "iCloud", "path": "INBOX", "writable": True},
         {"name": "Sent", "id": "2B", "account_name": "iCloud", "path": "Sent", "writable": False},
     ]
+    monkeypatch.setattr(mail, "store_list_mailboxes", Mock(side_effect=MailStoreUnavailable("x", "x")))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_list_mailboxes()
     assert len(result) == 2
@@ -99,14 +104,51 @@ def test_mail_list_mailboxes_returns_shape(monkeypatch):
 
 
 def test_mail_list_mailboxes_handles_empty(monkeypatch):
+    monkeypatch.setattr(mail, "store_list_mailboxes", Mock(side_effect=MailStoreUnavailable("x", "x")))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=""))
     assert mail.mail_list_mailboxes() == []
 
 
 def test_mail_list_mailboxes_rejects_non_list(monkeypatch):
+    monkeypatch.setattr(mail, "store_list_mailboxes", Mock(side_effect=MailStoreUnavailable("x", "x")))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value='{"oops": true}'))
     with pytest.raises(RuntimeError, match="payload"):
         mail.mail_list_mailboxes()
+
+
+def test_mail_list_mailboxes_prefers_store_inventory(monkeypatch):
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+    monkeypatch.setattr(
+        mail,
+        "store_list_mailboxes",
+        Mock(
+            return_value=[
+                {
+                    "mailbox_id": "imap://icloud/INBOX",
+                    "mailbox_url": "imap://icloud/INBOX",
+                    "mailbox_path": "INBOX",
+                    "account_token": "imap://icloud",
+                    "account_name": "iCloud",
+                },
+                {
+                    "mailbox_id": "ews://hotmail/Inbox",
+                    "mailbox_url": "ews://hotmail/Inbox",
+                    "mailbox_path": "Inbox",
+                    "account_token": "ews://hotmail",
+                    "account_name": "Abhinav Hotmail",
+                },
+            ]
+        ),
+    )
+
+    result = mail.mail_list_mailboxes()
+
+    assert [item["account_name"] for item in result] == ["iCloud", "Abhinav Hotmail"]
+    assert [item["id"] for item in result] == ["imap://icloud/INBOX", "ews://hotmail/Inbox"]
+    assert all(item["provider"] == "mail_store" for item in result)
+    assert all(item["writable"] is None for item in result)
+    run_mock.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +201,50 @@ def test_mail_recent_delegates_to_service(monkeypatch):
     assert kwargs["mailbox_inventory_fn"] is mail.mail_list_mailboxes
 
 
+def test_mail_diagnostics_delegates_to_store_inspection(monkeypatch):
+    inspect_mock = Mock(return_value={"ok": True, "provider": "mail_store"})
+    monkeypatch.setattr(mail, "inspect_mail_store", inspect_mock)
+
+    result = mail.mail_diagnostics()
+
+    assert result == {"ok": True, "provider": "mail_store"}
+    inspect_mock.assert_called_once_with()
+
+
+def test_refresh_mail_snapshot_delegates_to_store_refresh(monkeypatch):
+    refresh_mock = Mock(
+        return_value={
+            "source_path": "/src/Envelope Index",
+            "snapshot_db_path": "/tmp/snapshot/Envelope Index",
+            "created_at": 1.0,
+            "expires_at": 901.0,
+            "ttl_seconds": 900,
+            "copied_files": ["Envelope Index"],
+        }
+    )
+    monkeypatch.setattr(mail, "store_refresh_mail_snapshot", refresh_mock)
+
+    result = mail.refresh_mail_snapshot(ttl_seconds=900)
+
+    assert result["ok"] is True
+    assert result["provider"] == "mail_store_snapshot"
+    assert result["snapshot_db_path"] == "/tmp/snapshot/Envelope Index"
+    refresh_mock.assert_called_once_with(ttl_seconds=900)
+
+
+def test_refresh_mail_snapshot_returns_structured_permission_error(monkeypatch):
+    refresh_mock = Mock(
+        side_effect=MailStoreUnavailable("mail_store_permission_denied", "Denied")
+    )
+    monkeypatch.setattr(mail, "store_refresh_mail_snapshot", refresh_mock)
+
+    result = mail.refresh_mail_snapshot(ttl_seconds=900)
+
+    assert result["error"] == "mail_store_permission_denied"
+    assert "refresh-snapshot" in result["next_step"]
+    assert "Full Disk Access" in result["settings_path"]
+
+
 def test_mail_search_script_contract_smoke():
     assert "set preview to \"\"" in mail_service._SEARCH_SCRIPT
     assert "set preview to text 1 thru 200 of bodyText" not in mail_service._SEARCH_SCRIPT
@@ -166,6 +252,7 @@ def test_mail_search_script_contract_smoke():
     assert "if scanLim > 500 then set scanLim to 500" in mail_service._SEARCH_SCRIPT
     assert "if recentMode or unreadStr is not \"\"" in mail_service._SEARCH_SCRIPT
     assert "else if searchSubject and my containsCI(subj, qry) then" in mail_service._SEARCH_SCRIPT
+    assert "if recentMode then exit repeat" in mail_service._SEARCH_SCRIPT
 
 
 def test_mail_move_accepts_rfc_id(monkeypatch):
@@ -221,6 +308,7 @@ def test_mail_delete_accepts_rfc_id(monkeypatch):
 def test_mail_get_thread_plain_text_body(monkeypatch):
     payload = {
         "id": "<msg-1@test>",
+        "internal_id": "101",
         "subject": "hi",
         "sender": "a@b.com",
         "date": "2026-04-01T10:00:00",
@@ -229,6 +317,19 @@ def test_mail_get_thread_plain_text_body(monkeypatch):
         "account_name": "iCloud",
         "attachments": [],
     }
+    monkeypatch.setattr(
+        mail,
+        "_thread_scope_from_store",
+        Mock(
+            return_value={
+                "id": "<msg-1@test>",
+                "internal_id": "101",
+                "mailbox_id": "imap://icloud/INBOX",
+                "mailbox_path": "INBOX",
+                "account_name": "iCloud",
+            }
+        ),
+    )
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_get_thread("<msg-1@test>")
     assert result["id"] == "<msg-1@test>"
@@ -252,6 +353,7 @@ def test_mail_get_thread_strips_html_and_base64(monkeypatch):
         "attachments": [],
         "body": heavy,
     }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_get_thread("<m@x>")
     assert "<p>" not in result["body"]
@@ -272,6 +374,7 @@ def test_mail_get_thread_truncates_at_8000(monkeypatch):
         "attachments": [],
         "body": body,
     }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_get_thread("<m@x>")
     assert "truncated" in result["body"]
@@ -282,18 +385,22 @@ def test_mail_get_thread_truncates_at_8000(monkeypatch):
 def test_mail_get_thread_include_body_false_omits_body(monkeypatch):
     payload = {
         "id": "<m@x>",
+        "internal_id": "55",
         "subject": "s",
         "sender": "a@b",
         "date": "2026-04-01T00:00:00",
-        "mailbox_id": "mb",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
         "account_name": "acct",
         "attachments": [],
     }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=payload))
     run_mock = Mock(return_value=json.dumps(payload))
     monkeypatch.setattr(mail, "run_applescript", run_mock)
     result = mail.mail_get_thread("<m@x>", include_body=False)
     assert "body" not in result
-    assert run_mock.call_args.args[1:] == ("<m@x>", "0")
+    assert result["attachments"] == []
+    run_mock.assert_not_called()
 
 
 def test_mail_get_thread_attachment_metadata(monkeypatch):
@@ -309,6 +416,7 @@ def test_mail_get_thread_attachment_metadata(monkeypatch):
         ],
         "body": "x",
     }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
     result = mail.mail_get_thread("<m@x>")
     assert result["attachments"][0]["name"] == "report.pdf"
@@ -317,6 +425,7 @@ def test_mail_get_thread_attachment_metadata(monkeypatch):
 
 
 def test_mail_get_thread_rejects_non_dict(monkeypatch):
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
     monkeypatch.setattr(mail, "run_applescript", Mock(return_value="[1,2,3]"))
     with pytest.raises(RuntimeError, match="payload"):
         mail.mail_get_thread("<m@x>")
@@ -325,6 +434,96 @@ def test_mail_get_thread_rejects_non_dict(monkeypatch):
 def test_mail_get_thread_uses_safe_mailbox_identifier_helper():
     assert "set mbId to my mailboxIdentifier(mb)" in mail._GET_THREAD_SCRIPT
     assert "on mailboxIdentifier(mb)" in mail._GET_THREAD_SCRIPT
+
+
+def test_mail_get_thread_passes_scoped_store_hints_to_applescript(monkeypatch):
+    scoped = {
+        "id": "<m@x>",
+        "internal_id": "77",
+        "mail_object_id": "177",
+        "subject": "s",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+        "attachments": [],
+    }
+    payload = dict(scoped)
+    payload["body"] = "hello"
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=scoped))
+    run_mock = Mock(return_value=json.dumps(payload))
+    monkeypatch.setattr(mail, "run_applescript", run_mock)
+
+    result = mail.mail_get_thread("<m@x>", include_body=True)
+
+    assert result["body"] == "hello"
+    assert run_mock.call_args.args[1:] == ("<m@x>", "1", "177", "iCloud", "INBOX")
+
+
+def test_mail_get_thread_degrades_to_store_metadata_on_body_timeout(monkeypatch):
+    scoped = {
+        "id": "<m@x>",
+        "internal_id": "77",
+        "mail_object_id": "177",
+        "subject": "s",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+        "attachments": [],
+        "provider": "mail_store",
+    }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=scoped))
+    monkeypatch.setattr(mail, "run_applescript", Mock(side_effect=RuntimeError("AppleScript timed out")))
+
+    result = mail.mail_get_thread("<m@x>", include_body=True)
+
+    assert result["id"] == "<m@x>"
+    assert result["body"] == ""
+    assert result["body_available"] is False
+    assert result["body_unavailable"] == "AppleScript timed out"
+    assert result["attachments"] == []
+
+
+def test_mail_get_thread_degrades_when_applescript_returns_wrong_account(monkeypatch):
+    scoped = {
+        "id": "<m@x>",
+        "internal_id": "77",
+        "mail_object_id": "177",
+        "subject": "s",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+        "attachments": [],
+        "provider": "mail_store",
+    }
+    payload = dict(scoped)
+    payload["account_name"] = "Abhinav Hotmail"
+    payload["body"] = "wrong account body"
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=scoped))
+    monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
+
+    result = mail.mail_get_thread("<m@x>", include_body=True)
+
+    assert result["account_name"] == "iCloud"
+    assert result["body"] == ""
+    assert result["body_available"] is False
+    assert "different account" in result["body_unavailable"]
+
+
+def test_mail_get_thread_script_matches_internal_id_as_text():
+    assert 'set msgList to messages of mb' in mail._GET_THREAD_SCRIPT
+    assert 'set msgInternalId to (id of msg) as string' in mail._GET_THREAD_SCRIPT
+    assert 'if msgInternalId is internalId then' in mail._GET_THREAD_SCRIPT
+    assert 'tell application "Mail" to set msgMessageId to (message id of msg) as string' in mail._GET_THREAD_SCRIPT
+    assert 'if my normalizeMessageId(msgMessageId) is mid then' in mail._GET_THREAD_SCRIPT
+    assert 'set internalId to item 3 of argv' in mail._GET_THREAD_SCRIPT
+    assert 'on normalizeMessageId(valueText)' in mail._GET_THREAD_SCRIPT
+    assert 'set candidates to (messages of mb whose id is (internalId as integer))' not in mail._GET_THREAD_SCRIPT
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +799,7 @@ def test_bridge_runtime_error_propagates(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("AppleScript failed (exit 1)")
 
+    monkeypatch.setattr(mail, "store_list_mailboxes", Mock(side_effect=MailStoreUnavailable("x", "x")))
     monkeypatch.setattr(mail, "run_applescript", boom)
     with pytest.raises(RuntimeError, match="AppleScript failed"):
         mail.mail_list_mailboxes()
@@ -609,6 +809,7 @@ def test_bridge_error_does_not_leak_stderr(monkeypatch):
     def boom(*args, **kwargs):
         raise RuntimeError("AppleScript failed (exit 1)")
 
+    monkeypatch.setattr(mail, "store_list_mailboxes", Mock(side_effect=MailStoreUnavailable("x", "x")))
     monkeypatch.setattr(mail, "run_applescript", boom)
     try:
         mail.mail_list_mailboxes()

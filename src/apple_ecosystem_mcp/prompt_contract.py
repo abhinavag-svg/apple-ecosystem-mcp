@@ -25,7 +25,9 @@ MAIL_SEARCH_CONTRACT = ToolContract(
         "Search Mail by literal query text or explicit fielded filters. "
         "Use this tool for keyword-style lookups such as sender, subject, or body search. "
         "For chronological retrieval, prefer mail_recent instead of inventing keywords. "
-        "If you need a time window here, pass the user's literal query string and constrain it "
+        "If the user asks for mail from a sender and does not give a time window, ask a follow-up "
+        "for since and/or before rather than running an unbounded sender search. "
+        "If you already have the window, pass the user's literal query string and constrain it "
         "with since and/or before."
     ),
 )
@@ -63,7 +65,7 @@ PROMPT_EXAMPLES: tuple[PromptExample, ...] = (
         prompt="Find emails from Ankita about school pickup.",
         intent_category="mail_search",
         preferred_tool="mail_search",
-        guidance="Use the literal topic query and fielded sender filter when available.",
+        guidance="Ask for a time window first if none is provided; then use the literal topic query and fielded sender filter.",
     ),
     PromptExample(
         prompt="Search my mail for receipts from Apple with attachments.",

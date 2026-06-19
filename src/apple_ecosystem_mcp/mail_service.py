@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Callable
 
+from . import __build_marker__, __version__
 from .bridge import run_applescript
 from .mail_store import (
     MailSearchQuery,
     MailStoreUnavailable,
+    get_mail_snapshot_state,
     list_mail_store_mailboxes,
+    refresh_mail_snapshot,
     search_mail_store,
 )
 
@@ -19,6 +23,7 @@ MAIL_PROVIDER_AUTO = "auto"
 MAIL_PROVIDER_LOCAL = "local"
 MAIL_PROVIDER_APPLESCRIPT = "applescript"
 MAIL_RECENT_DEFAULT_FIELDS = ("subject", "sender")
+_logger = logging.getLogger("apple_ecosystem_mcp.bridge")
 
 
 def _parse_json(raw: str) -> Any:
@@ -90,6 +95,7 @@ def _search_with_mail_store(
     before: str | None,
     search_fields: list[str],
     filters: dict,
+    db_path: Any = None,
 ) -> list[dict[str, Any]]:
     mailbox_ids = filters.get("mailbox_ids") or []
     if not isinstance(mailbox_ids, list):
@@ -114,7 +120,21 @@ def _search_with_mail_store(
         to_addr=filters.get("to_addr") or None,
         cc_addr=filters.get("cc_addr") or None,
     )
-    return search_mail_store(search)
+    try:
+        return search_mail_store(search, db_path=db_path)
+    except TypeError:
+        if db_path is None:
+            return search_mail_store(search)
+        raise
+
+
+def _list_store_mailboxes(*, db_path: Any = None) -> list[dict[str, Any]]:
+    try:
+        return list_mail_store_mailboxes(db_path=db_path)
+    except TypeError:
+        if db_path is None:
+            return list_mail_store_mailboxes()
+        raise
 
 
 def _mailbox_inventory(
@@ -165,9 +185,11 @@ def _group_mailboxes_by_account(
 
 def _mail_store_mailboxes_by_account(
     inventory: list[dict[str, Any]],
+    *,
+    db_path: Any = None,
 ) -> dict[str, list[dict[str, Any]]]:
     try:
-        store_mailboxes = list_mail_store_mailboxes()
+        store_mailboxes = _list_store_mailboxes(db_path=db_path)
     except MailStoreUnavailable:
         return {}
 
@@ -205,25 +227,18 @@ def _mail_store_mailboxes_by_account(
 def _infer_store_account_label(rows: list[dict[str, Any]]) -> str | None:
     if not rows:
         return None
+    label = _nn(rows[0].get("account_name"))
+    if label:
+        return str(label)
     token = str(rows[0].get("account_token") or "")
-    paths = {str(item.get("mailbox_path") or "") for item in rows}
-    lowered_paths = {path.casefold() for path in paths if path}
     if token.startswith("local://"):
         return None
-    if token.startswith("ews://"):
-        return "Hotmail"
-    if token.startswith("imap://"):
-        if "recovered messages (icloud)" in lowered_paths:
-            return "iCloud"
-        if {"inbox", "sent messages", "deleted messages"} & lowered_paths:
-            return "iCloud"
-        return "IMAP"
-    return None
+    return token or None
 
 
-def _store_only_mailboxes_by_account() -> dict[str, list[dict[str, Any]]]:
+def _store_only_mailboxes_by_account(*, db_path: Any = None) -> dict[str, list[dict[str, Any]]]:
     try:
-        store_mailboxes = list_mail_store_mailboxes()
+        store_mailboxes = _list_store_mailboxes(db_path=db_path)
     except MailStoreUnavailable:
         return {}
 
@@ -247,8 +262,87 @@ def _store_only_mailboxes_by_account() -> dict[str, list[dict[str, Any]]]:
     return matched
 
 
+def _looks_like_store_mailbox_id(value: Any) -> bool:
+    text = _nn(value)
+    if not text:
+        return False
+    return "://" in str(text)
+
+
+def _resolve_scoped_store_mailbox_ids(
+    mailbox_values: list[Any],
+    *,
+    scoped_account: str | None,
+    inventory: list[dict[str, Any]],
+    db_path: Any = None,
+) -> tuple[list[str], str | None]:
+    raw_values = [str(item) for item in mailbox_values if _nn(item)]
+    if not raw_values:
+        return [], scoped_account
+
+    if all(_looks_like_store_mailbox_id(value) for value in raw_values):
+        return raw_values, scoped_account
+
+    store_groups = _mail_store_mailboxes_by_account(inventory, db_path=db_path)
+    if not store_groups:
+        store_groups = _store_only_mailboxes_by_account(db_path=db_path)
+
+    candidate_accounts = [scoped_account] if scoped_account else list(store_groups.keys())
+    normalized_inputs = {value.casefold() for value in raw_values}
+    matched_ids: list[str] = []
+    matched_account: str | None = scoped_account
+
+    for account in candidate_accounts:
+        store_mailboxes = store_groups.get(account) or []
+        account_matches = [
+            str(item.get("mailbox_url"))
+            for item in store_mailboxes
+            if item.get("mailbox_url")
+            and (
+                str(item.get("mailbox_url")).casefold() in normalized_inputs
+                or str(item.get("mailbox_path") or "").casefold() in normalized_inputs
+            )
+        ]
+        if account_matches:
+            matched_ids.extend(account_matches)
+            if matched_account is None:
+                matched_account = account
+            if scoped_account:
+                break
+
+    if matched_ids:
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for value in matched_ids:
+            if value in seen:
+                continue
+            seen.add(value)
+            deduped.append(value)
+        return deduped, matched_account
+
+    return raw_values, scoped_account
+
+
 def _sort_mail_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: str(item.get("date") or ""), reverse=True)
+
+
+def _mailbox_id_groups_for_applescript_recent(
+    inventory: list[dict[str, Any]],
+    *,
+    account_name: str | None = None,
+) -> list[tuple[str, list[str]]]:
+    grouped = _group_mailboxes_by_account(
+        inventory,
+        account_name=account_name,
+        inbox_only=True,
+    )
+    plans: list[tuple[str, list[str]]] = []
+    for account, items in grouped:
+        mailbox_ids = [str(item.get("id")) for item in items if item.get("id")]
+        if mailbox_ids:
+            plans.append((account, mailbox_ids))
+    return plans
 
 
 def _search_mail_store_scoped(
@@ -261,6 +355,7 @@ def _search_mail_store_scoped(
     search_fields: list[str],
     filters: dict,
     mailbox_inventory_fn: Callable[[], list[dict]] | None,
+    db_path: Any = None,
 ) -> list[dict[str, Any]]:
     scoped_account = filters.get("account_name")
     if not scoped_account and not _is_recency_style_search(query, filters):
@@ -272,20 +367,40 @@ def _search_mail_store_scoped(
             before=before,
             search_fields=search_fields,
             filters=filters,
+            db_path=db_path,
         )
 
     inventory = _mailbox_inventory(mailbox_inventory_fn)
     explicit_mailbox_ids = filters.get("mailbox_ids")
     if mailbox_id or explicit_mailbox_ids:
-        return _search_with_mail_store(
+        scoped_filters = dict(filters)
+        resolved_ids, resolved_account = _resolve_scoped_store_mailbox_ids(
+            list(explicit_mailbox_ids) if isinstance(explicit_mailbox_ids, list) else [],
+            scoped_account=scoped_account,
+            inventory=inventory,
+            db_path=db_path,
+        )
+        if resolved_ids:
+            scoped_filters["mailbox_ids"] = resolved_ids
+        elif "mailbox_ids" in scoped_filters and explicit_mailbox_ids is not None:
+            scoped_filters["mailbox_ids"] = list(explicit_mailbox_ids)
+        if resolved_account:
+            scoped_filters["account_name"] = resolved_account
+        rows = _search_with_mail_store(
             query=query,
             mailbox_id=mailbox_id,
             limit=limit,
             since=since,
             before=before,
             search_fields=search_fields,
-            filters=filters,
+            filters=scoped_filters,
+            db_path=db_path,
         )
+        if resolved_account:
+            for row in rows:
+                if isinstance(row, dict) and not row.get("account_name"):
+                    row["account_name"] = resolved_account
+        return rows
 
     inbox_only = _is_recency_style_search(query, filters)
     inventory_groups: dict[str, list[dict[str, Any]]] = {}
@@ -298,10 +413,15 @@ def _search_mail_store_scoped(
                 inbox_only=False,
             )
         )
-        store_groups = _mail_store_mailboxes_by_account(inventory)
+        store_groups = _mail_store_mailboxes_by_account(inventory, db_path=db_path)
     if not store_groups:
-        store_groups = _store_only_mailboxes_by_account()
+        store_groups = _store_only_mailboxes_by_account(db_path=db_path)
     account_names = [scoped_account] if scoped_account else list(store_groups.keys())
+    if scoped_account and scoped_account not in store_groups:
+        raise MailStoreUnavailable(
+            "mail_account_scope_unavailable",
+            "Mail account scope could not be verified from local Mail account metadata",
+        )
     if not account_names:
         return _search_with_mail_store(
             query=query,
@@ -311,6 +431,7 @@ def _search_mail_store_scoped(
             before=before,
             search_fields=search_fields,
             filters=filters,
+            db_path=db_path,
         )
 
     collected: list[dict[str, Any]] = []
@@ -362,6 +483,7 @@ def _search_mail_store_scoped(
             before=before,
             search_fields=search_fields,
             filters=scoped_filters,
+            db_path=db_path,
         )
         for row in rows:
             if not isinstance(row, dict):
@@ -383,8 +505,258 @@ def _search_mail_store_scoped(
             before=before,
             search_fields=search_fields,
             filters=filters,
+            db_path=db_path,
         )
     return _sort_mail_results(collected)[:limit]
+
+
+def _mail_store_degraded_state(exc: MailStoreUnavailable) -> dict[str, Any]:
+    snapshot_state = get_mail_snapshot_state()
+    if snapshot_state is not None:
+        state = {
+            "error": "mail_snapshot_unavailable",
+            "message": "Live Mail metadata is unavailable and the current snapshot could not be used.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": exc.code,
+            "snapshot_available": True,
+        }
+    else:
+        state = {
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": exc.code,
+            "snapshot_available": False,
+        }
+    if exc.code == "mail_store_permission_denied":
+        state["next_step"] = (
+            "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime."
+        )
+        state["settings_path"] = "System Settings > Privacy & Security > Full Disk Access"
+    return state
+
+
+def _run_applescript_search(
+    *,
+    query: str,
+    mailbox_id: str | None,
+    capped: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str],
+    filters: dict,
+    recent_mode: bool,
+    timeout: int = 35,
+) -> list[dict[str, Any]]:
+    args = _build_search_args(
+        query=query,
+        mailbox_id=mailbox_id,
+        capped=capped,
+        since=since,
+        before=before,
+        search_fields=search_fields,
+        filters=filters,
+        recent_mode=recent_mode,
+    )
+    raw = run_applescript(_SEARCH_SCRIPT, *args, timeout=timeout)
+    data = _parse_json(raw) or []
+    if not isinstance(data, list):
+        raise RuntimeError("Unexpected mail_search payload shape")
+    for item in data:
+        if isinstance(item, dict) and isinstance(item.get("preview"), str):
+            item["preview"] = item["preview"][:MAIL_PREVIEW_CHARS]
+    return data[:capped]
+
+
+def _search_mail_applescript_scoped(
+    *,
+    query: str,
+    mailbox_id: str | None,
+    limit: int,
+    since: str | None,
+    before: str | None,
+    search_fields: list[str],
+    filters: dict,
+    recent_mode: bool,
+    mailbox_inventory_fn: Callable[[], list[dict]] | None,
+) -> list[dict[str, Any]]:
+    if not recent_mode or query or mailbox_id or filters.get("mailbox_ids"):
+        return _run_applescript_search(
+            query=query,
+            mailbox_id=mailbox_id,
+            capped=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+            recent_mode=recent_mode,
+        )
+
+    inventory = _mailbox_inventory(mailbox_inventory_fn)
+    plans = _mailbox_id_groups_for_applescript_recent(
+        inventory,
+        account_name=filters.get("account_name"),
+    )
+    _logger.debug(
+        "mail_recent build=%s version=%s scoped_plans=%s since=%s before=%s account_filter=%s",
+        __build_marker__,
+        __version__,
+        [(account, len(mailbox_ids)) for account, mailbox_ids in plans],
+        since,
+        before,
+        filters.get("account_name"),
+    )
+    if not plans:
+        return _run_applescript_search(
+            query=query,
+            mailbox_id=mailbox_id,
+            capped=limit,
+            since=since,
+            before=before,
+            search_fields=search_fields,
+            filters=filters,
+            recent_mode=recent_mode,
+        )
+
+    collected: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    last_timeout: RuntimeError | None = None
+    for account, mailbox_ids in plans:
+        scoped_query_specs: list[dict[str, Any]] = []
+        base_filters = dict(filters)
+        base_filters["account_name"] = account
+        base_filters["mailbox_ids"] = mailbox_ids
+        if since and "unread" not in base_filters:
+            scoped_query_specs = [
+                {"filters": {**base_filters, "unread": True}, "limit": max(limit, 10)},
+                {"filters": {**base_filters, "unread": False}, "limit": max(limit, 10)},
+            ]
+        else:
+            scoped_query_specs = [{"filters": base_filters, "limit": max(limit, 10)}]
+
+        for spec in scoped_query_specs:
+            try:
+                rows = _run_applescript_search(
+                    query=query,
+                    mailbox_id=None,
+                    capped=spec["limit"],
+                    since=since,
+                    before=before,
+                    search_fields=search_fields,
+                    filters=spec["filters"],
+                    recent_mode=recent_mode,
+                    timeout=12,
+                )
+            except RuntimeError as exc:
+                if "timed out" not in str(exc).lower():
+                    raise
+                last_timeout = exc
+                _logger.debug(
+                    "mail_recent build=%s account=%s mailbox_scope=%s unread=%s timeout=true",
+                    __build_marker__,
+                    account,
+                    mailbox_ids,
+                    spec["filters"].get("unread"),
+                )
+                continue
+            _logger.debug(
+                "mail_recent build=%s account=%s mailbox_scope=%s unread=%s result_count=%s",
+                __build_marker__,
+                account,
+                mailbox_ids,
+                spec["filters"].get("unread"),
+                len(rows),
+            )
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if not row.get("account_name"):
+                    row["account_name"] = account
+                key = (str(row.get("id") or ""), str(row.get("internal_id") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                collected.append(row)
+
+        if not any(
+            str(item.get("account_name") or "") == account
+            for item in collected
+        ):
+            fallback_filters = dict(filters)
+            fallback_filters["account_name"] = account
+            fallback_filters.pop("mailbox_ids", None)
+            _logger.debug(
+                "mail_recent build=%s account=%s mailbox_scope_empty=true retrying_account_only",
+                __build_marker__,
+                account,
+            )
+            fallback_specs: list[dict[str, Any]]
+            if since and "unread" not in fallback_filters:
+                fallback_specs = [
+                    {"filters": {**fallback_filters, "unread": True}, "limit": max(limit, 10)},
+                    {"filters": {**fallback_filters, "unread": False}, "limit": max(limit, 10)},
+                ]
+            else:
+                fallback_specs = [{"filters": fallback_filters, "limit": max(limit, 10)}]
+            for spec in fallback_specs:
+                try:
+                    rows = _run_applescript_search(
+                        query=query,
+                        mailbox_id=None,
+                        capped=spec["limit"],
+                        since=since,
+                        before=before,
+                        search_fields=search_fields,
+                        filters=spec["filters"],
+                        recent_mode=recent_mode,
+                        timeout=12,
+                    )
+                except RuntimeError as exc:
+                    if "timed out" not in str(exc).lower():
+                        raise
+                    last_timeout = exc
+                    _logger.debug(
+                        "mail_recent build=%s account=%s account_only unread=%s timeout=true",
+                        __build_marker__,
+                        account,
+                        spec["filters"].get("unread"),
+                    )
+                    continue
+                _logger.debug(
+                    "mail_recent build=%s account=%s account_only unread=%s result_count=%s",
+                    __build_marker__,
+                    account,
+                    spec["filters"].get("unread"),
+                    len(rows),
+                )
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    if not row.get("account_name"):
+                        row["account_name"] = account
+                    key = (str(row.get("id") or ""), str(row.get("internal_id") or ""))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    collected.append(row)
+
+    if collected:
+        return _sort_mail_results(collected)[:limit]
+    if last_timeout is not None:
+        raise last_timeout
+    return _run_applescript_search(
+        query=query,
+        mailbox_id=mailbox_id,
+        capped=limit,
+        since=since,
+        before=before,
+        search_fields=search_fields,
+        filters=filters,
+        recent_mode=recent_mode,
+    )
 
 
 def _build_search_args(
@@ -473,29 +845,78 @@ def _execute_search(
                 filters=filters,
                 mailbox_inventory_fn=mailbox_inventory_fn,
             )
+            _logger.debug(
+                "mail_store build=%s version=%s recent_mode=%s query=%r since=%s before=%s result_count=%s",
+                __build_marker__,
+                __version__,
+                recent_mode,
+                query,
+                since,
+                before,
+                len(data),
+            )
             return data[:capped]
         except MailStoreUnavailable as exc:
-            if provider_mode == MAIL_PROVIDER_LOCAL:
-                return [exc.to_dict()]
+            _logger.debug(
+                "mail_store build=%s version=%s recent_mode=%s query=%r failed code=%s message=%s",
+                __build_marker__,
+                __version__,
+                recent_mode,
+                query,
+                exc.code,
+                str(exc),
+            )
+            snapshot_state = get_mail_snapshot_state()
+            if snapshot_state is not None:
+                snapshot_db_path = snapshot_state.get("snapshot_db_path")
+                if snapshot_db_path:
+                    try:
+                        data = _search_mail_store_scoped(
+                            query=query,
+                            mailbox_id=mailbox_id,
+                            limit=capped,
+                            since=since,
+                            before=before,
+                            search_fields=search_fields,
+                            filters=filters,
+                            mailbox_inventory_fn=mailbox_inventory_fn,
+                            db_path=snapshot_db_path,
+                        )
+                        _logger.debug(
+                            "mail_store_snapshot build=%s version=%s recent_mode=%s query=%r since=%s before=%s result_count=%s",
+                            __build_marker__,
+                            __version__,
+                            recent_mode,
+                            query,
+                            since,
+                            before,
+                            len(data),
+                        )
+                        return data[:capped]
+                    except MailStoreUnavailable as snapshot_exc:
+                        _logger.debug(
+                            "mail_store_snapshot build=%s version=%s recent_mode=%s query=%r failed code=%s message=%s",
+                            __build_marker__,
+                            __version__,
+                            recent_mode,
+                            query,
+                            snapshot_exc.code,
+                            str(snapshot_exc),
+                        )
+            if provider_mode == MAIL_PROVIDER_LOCAL or recent_mode or "body" not in search_fields:
+                return [_mail_store_degraded_state(exc)]
 
-    args = _build_search_args(
+    return _search_mail_applescript_scoped(
         query=query,
         mailbox_id=mailbox_id,
-        capped=capped,
+        limit=capped,
         since=since,
         before=before,
         search_fields=search_fields,
         filters=filters,
         recent_mode=recent_mode,
+        mailbox_inventory_fn=mailbox_inventory_fn,
     )
-    raw = run_applescript(_SEARCH_SCRIPT, *args, timeout=35)
-    data = _parse_json(raw) or []
-    if not isinstance(data, list):
-        raise RuntimeError("Unexpected mail_search payload shape")
-    for item in data:
-        if isinstance(item, dict) and isinstance(item.get("preview"), str):
-            item["preview"] = item["preview"][:MAIL_PREVIEW_CHARS]
-    return data[:capped]
 
 
 def search_mail(
@@ -639,7 +1060,21 @@ on run argv
                         set msgList to {}
                         set mCount to 0
                         try
-                            set msgList to messages of mb
+                            if fromAddr is not "" then
+                                if unreadStr is "1" then
+                                    set msgList to (messages of mb whose read status is false and sender contains fromAddr)
+                                else if unreadStr is "0" then
+                                    set msgList to (messages of mb whose read status is true and sender contains fromAddr)
+                                else
+                                    set msgList to (messages of mb whose sender contains fromAddr)
+                                end if
+                            else if unreadStr is "1" then
+                                set msgList to (messages of mb whose read status is false)
+                            else if unreadStr is "0" then
+                                set msgList to (messages of mb whose read status is true)
+                            else
+                                set msgList to messages of mb
+                            end if
                             set mCount to count of msgList
                         end try
 
@@ -700,6 +1135,7 @@ on run argv
                                         set dateInRange to true
                                         if sinceStr is not "" and (msgDate is "" or msgDate < sinceStr) then
                                             set dateInRange to false
+                                            if recentMode then exit repeat
                                         end if
                                         if beforeStr is not "" and (msgDate is "" or msgDate > beforeStr) then
                                             set dateInRange to false
