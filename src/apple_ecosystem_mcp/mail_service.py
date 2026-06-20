@@ -384,18 +384,6 @@ def _search_mail_store_scoped(
     db_path: Any = None,
 ) -> list[dict[str, Any]]:
     scoped_account = filters.get("account_name")
-    if not scoped_account and not _is_recency_style_search(query, filters):
-        return _search_with_mail_store(
-            query=query,
-            mailbox_id=mailbox_id,
-            limit=limit,
-            since=since,
-            before=before,
-            search_fields=search_fields,
-            filters=filters,
-            db_path=db_path,
-        )
-
     inventory = _mailbox_inventory(mailbox_inventory_fn)
     explicit_mailbox_ids = filters.get("mailbox_ids")
     if mailbox_id or explicit_mailbox_ids:
@@ -428,7 +416,7 @@ def _search_mail_store_scoped(
                     row["account_name"] = resolved_account
         return rows
 
-    inbox_only = _is_recency_style_search(query, filters)
+    inbox_only = True
     inventory_groups: dict[str, list[dict[str, Any]]] = {}
     store_groups: dict[str, list[dict[str, Any]]] = {}
     if inventory:
@@ -522,17 +510,6 @@ def _search_mail_store_scoped(
                 continue
             seen.add(key)
             collected.append(row)
-    if not collected:
-        return _search_with_mail_store(
-            query=query,
-            mailbox_id=mailbox_id,
-            limit=limit,
-            since=since,
-            before=before,
-            search_fields=search_fields,
-            filters=filters,
-            db_path=db_path,
-        )
     return _sort_mail_results(collected)[:limit]
 
 
@@ -952,7 +929,7 @@ def _execute_search(
         except MailStoreUnavailable as exc:
             return [_mail_store_degraded_state(exc)]
 
-    if provider_mode == MAIL_PROVIDER_AUTO and recent_mode and store_capable:
+    if provider_mode == MAIL_PROVIDER_AUTO and store_capable:
         try:
             return _search_mail_store_with_snapshot_fallback(
                 query=query,
@@ -966,7 +943,11 @@ def _execute_search(
             )
         except MailStoreUnavailable as exc:
             degraded = _mail_store_degraded_state(exc)
-            degraded["reason"] = "recent_mail_requires_trusted_metadata"
+            degraded["reason"] = (
+                "recent_mail_requires_trusted_metadata"
+                if recent_mode
+                else "mail_search_requires_trusted_metadata"
+            )
             return [degraded]
 
     try:

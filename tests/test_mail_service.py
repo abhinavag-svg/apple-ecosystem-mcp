@@ -257,16 +257,61 @@ def test_search_mail_local_provider_returns_degraded_state(monkeypatch):
     ]
 
 
-def test_search_mail_auto_uses_applescript_first(monkeypatch):
+def test_search_mail_auto_uses_store_before_applescript(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
     run_mock = Mock(return_value="[]")
     monkeypatch.setattr(mail_service, "run_applescript", run_mock)
-    store_mock = Mock(return_value=[])
-    monkeypatch.setattr(mail_service, "search_mail_store", store_mock)
+    store_mock = Mock(
+        return_value=[
+            {
+                "id": "<linkedin@test>",
+                "subject": "Senior Director, Technology Transformation Lead at Marriott International",
+                "sender": "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+                "date": "2026-06-20T10:27:47",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "account_name": "iCloud",
+                "has_attachments": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(mail_service, "_search_mail_store_scoped", store_mock)
 
-    assert mail_service.search_mail("", since="2026-05-28T13:00:00") == []
-    run_mock.assert_called_once()
-    store_mock.assert_not_called()
+    result = mail_service.search_mail("linkedin", since="2026-06-19T08:00:00")
+
+    assert result[0]["id"] == "<linkedin@test>"
+    assert store_mock.call_args.kwargs["query"] == "linkedin"
+    assert store_mock.call_args.kwargs["since"] == "2026-06-19T08:00:00"
+    run_mock.assert_not_called()
+
+
+def test_search_mail_auto_returns_degraded_when_trusted_metadata_unavailable(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value="[]")
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "get_mail_snapshot_state", Mock(return_value=None))
+
+    def unavailable(_search):
+        raise MailStoreUnavailable("mail_store_permission_denied", "Denied")
+
+    monkeypatch.setattr(mail_service, "search_mail_store", unavailable)
+
+    result = mail_service.search_mail("linkedin", since="2026-06-19T08:00:00")
+
+    assert result == [
+        {
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": "mail_store_permission_denied",
+            "snapshot_available": False,
+            "next_step": "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime.",
+            "settings_path": "System Settings > Privacy & Security > Full Disk Access",
+            "reason": "mail_search_requires_trusted_metadata",
+        }
+    ]
+    run_mock.assert_not_called()
 
 
 def test_recent_mail_auto_uses_store_before_applescript(monkeypatch):
@@ -327,7 +372,7 @@ def test_recent_mail_auto_returns_degraded_when_trusted_metadata_unavailable(mon
     run_mock.assert_not_called()
 
 
-def test_search_mail_auto_returns_degraded_state_when_applescript_and_store_unavailable(monkeypatch):
+def test_search_mail_auto_returns_degraded_state_when_trusted_metadata_unavailable(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
     run_mock = Mock(side_effect=RuntimeError("AppleScript timed out"))
     monkeypatch.setattr(mail_service, "run_applescript", run_mock)
@@ -346,10 +391,10 @@ def test_search_mail_auto_returns_degraded_state_when_applescript_and_store_unav
             "provider": "mail_store",
             "live_error": "mail_store_unavailable",
             "snapshot_available": False,
-            "applescript_error": "AppleScript timed out",
+            "reason": "mail_search_requires_trusted_metadata",
         }
     ]
-    run_mock.assert_called_once()
+    run_mock.assert_not_called()
 
 
 def test_search_mail_permission_denied_returns_guidance(monkeypatch):
@@ -370,9 +415,9 @@ def test_search_mail_permission_denied_returns_guidance(monkeypatch):
             "provider": "mail_store",
             "live_error": "mail_store_permission_denied",
             "snapshot_available": False,
-            "applescript_error": "AppleScript timed out",
             "next_step": "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime.",
             "settings_path": "System Settings > Privacy & Security > Full Disk Access",
+            "reason": "mail_search_requires_trusted_metadata",
         }
     ]
 
@@ -422,10 +467,8 @@ def test_search_mail_uses_snapshot_when_live_store_unavailable(monkeypatch):
     result = mail_service.search_mail("", since="2026-05-28T13:00:00")
 
     assert result[0]["id"] == "<snapshot@test>"
-    assert result[0]["fallback_provider"] == "mail_store"
-    assert result[0]["primary_provider_error"] == "AppleScript timed out"
     assert calls == [None, "/tmp/mail-snapshot/Envelope Index"]
-    run_mock.assert_called_once()
+    run_mock.assert_not_called()
 
 
 def test_search_mail_body_search_stays_on_applescript(monkeypatch):
@@ -514,7 +557,7 @@ def test_search_mail_local_account_scoping_uses_inventory_callback(monkeypatch):
     )
 
     assert result[0]["account_name"] == "iCloud"
-    assert seen[0].mailbox_ids == ("imap://icloud/INBOX", "imap://icloud/Archive")
+    assert seen[0].mailbox_ids == ("imap://icloud/INBOX",)
 
 
 def test_search_mail_account_scope_requires_inventory(monkeypatch):
