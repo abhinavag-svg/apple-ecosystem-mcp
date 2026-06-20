@@ -22,6 +22,7 @@ MAIL_PREVIEW_CHARS = 200
 MAIL_PROVIDER_AUTO = "auto"
 MAIL_PROVIDER_LOCAL = "local"
 MAIL_PROVIDER_APPLESCRIPT = "applescript"
+MAIL_SEARCH_DEFAULT_FIELDS = ("subject", "sender")
 MAIL_RECENT_DEFAULT_FIELDS = ("subject", "sender")
 _logger = logging.getLogger("apple_ecosystem_mcp.bridge")
 
@@ -58,7 +59,7 @@ def _mail_provider_mode(filters: dict) -> str:
 
 
 def _normalize_search_fields(search_fields: list[str] | None) -> list[str]:
-    fields = search_fields or ["subject"]
+    fields = search_fields or list(MAIL_SEARCH_DEFAULT_FIELDS)
     normalized: list[str] = []
     for field in fields:
         value = str(field).strip().lower()
@@ -66,7 +67,7 @@ def _normalize_search_fields(search_fields: list[str] | None) -> list[str]:
             value = "sender"
         if value and value not in normalized:
             normalized.append(value)
-    return normalized or ["subject"]
+    return normalized or list(MAIL_SEARCH_DEFAULT_FIELDS)
 
 
 def _normalize_mail_filters(filters: dict | None) -> dict:

@@ -54,7 +54,7 @@ def test_search_mail_applescript_argv_and_preview_truncation(monkeypatch):
         "",
         "0",
         "1",
-        "0",
+        "1",
         "",
         "",
         "800",
@@ -169,6 +169,37 @@ def test_search_mail_normalizes_sender_filter_alias(monkeypatch):
     )
 
     assert seen[0].from_addr == "jobs-noreply@linkedin.com"
+    run_mock.assert_not_called()
+
+
+def test_search_mail_default_fields_include_sender_for_local_store(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "local")
+    run_mock = Mock(return_value="[]")
+    seen = []
+
+    def store(search):
+        seen.append(search)
+        return [
+            {
+                "id": "<linkedin@test>",
+                "subject": "Senior Director, Technology Transformation Lead at Marriott International",
+                "sender": "LinkedIn Job Alerts <jobalerts-noreply@linkedin.com>",
+                "date": "2026-06-20T10:27:47",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "account_name": "iCloud",
+                "has_attachments": False,
+            }
+        ]
+
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "search_mail_store", store)
+
+    result = mail_service.search_mail("linkedin", since="2026-06-20T00:00:00")
+
+    assert result[0]["id"] == "<linkedin@test>"
+    assert seen[0].search_subject is True
+    assert seen[0].search_sender is True
     run_mock.assert_not_called()
 
 
