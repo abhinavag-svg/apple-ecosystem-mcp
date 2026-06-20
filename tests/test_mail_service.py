@@ -131,7 +131,7 @@ def test_search_mail_normalizes_from_search_field_alias(monkeypatch):
     assert args[14] == "1"  # search_sender
 
 
-def test_recent_mail_auto_normalizes_sender_filter_alias_for_applescript(monkeypatch):
+def test_recent_mail_auto_normalizes_sender_filter_alias_for_store(monkeypatch):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
     run_mock = Mock(return_value="[]")
     store_mock = Mock(return_value=[])
@@ -146,9 +146,8 @@ def test_recent_mail_auto_normalizes_sender_filter_alias_for_applescript(monkeyp
     )
 
     assert result == []
-    args = run_mock.call_args.args
-    assert args[5] == "jobs-noreply@linkedin.com"  # from_addr
-    store_mock.assert_not_called()
+    assert store_mock.call_args.args[0].from_addr == "jobs-noreply@linkedin.com"
+    run_mock.assert_not_called()
 
 
 def test_search_mail_normalizes_sender_filter_alias(monkeypatch):
@@ -237,6 +236,64 @@ def test_search_mail_auto_uses_applescript_first(monkeypatch):
     assert mail_service.search_mail("", since="2026-05-28T13:00:00") == []
     run_mock.assert_called_once()
     store_mock.assert_not_called()
+
+
+def test_recent_mail_auto_uses_store_before_applescript(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value=_search_payload(10))
+    store_mock = Mock(
+        return_value=[
+            {
+                "id": "<fresh@test>",
+                "subject": "Fresh",
+                "sender": "a@example.com",
+                "date": "2026-06-20T09:30:00",
+                "preview": "",
+                "mailbox_id": "imap://icloud/INBOX",
+                "account_name": "iCloud",
+                "has_attachments": False,
+            }
+        ]
+    )
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "_search_mail_store_scoped", store_mock)
+
+    result = mail_service.recent_mail(limit=10)
+
+    assert result[0]["id"] == "<fresh@test>"
+    assert store_mock.call_args.kwargs["query"] == ""
+    assert store_mock.call_args.kwargs["since"] is None
+    assert store_mock.call_args.kwargs["before"] is None
+    run_mock.assert_not_called()
+
+
+def test_recent_mail_auto_returns_degraded_when_trusted_metadata_unavailable(monkeypatch):
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER", "auto")
+    run_mock = Mock(return_value=_search_payload(10))
+    monkeypatch.setattr(mail_service, "run_applescript", run_mock)
+    monkeypatch.setattr(mail_service, "get_mail_snapshot_state", Mock(return_value=None))
+
+    def unavailable(_search):
+        raise MailStoreUnavailable("mail_store_permission_denied", "Denied")
+
+    monkeypatch.setattr(mail_service, "search_mail_store", unavailable)
+
+    result = mail_service.recent_mail(limit=10)
+
+    assert result == [
+        {
+            "error": "mail_snapshot_required",
+            "message": "Live Mail metadata is unavailable. Run refresh_mail_snapshot to create a temporary Mail snapshot for reads.",
+            "recoverable": True,
+            "provider": "mail_store",
+            "live_error": "mail_store_permission_denied",
+            "snapshot_available": False,
+            "next_step": "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime.",
+            "settings_path": "System Settings > Privacy & Security > Full Disk Access",
+            "reason": "recent_mail_requires_trusted_metadata",
+        }
+    ]
+    run_mock.assert_not_called()
 
 
 def test_search_mail_auto_returns_degraded_state_when_applescript_and_store_unavailable(monkeypatch):

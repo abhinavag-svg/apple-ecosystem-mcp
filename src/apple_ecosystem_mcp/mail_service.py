@@ -951,6 +951,23 @@ def _execute_search(
         except MailStoreUnavailable as exc:
             return [_mail_store_degraded_state(exc)]
 
+    if provider_mode == MAIL_PROVIDER_AUTO and recent_mode and store_capable:
+        try:
+            return _search_mail_store_with_snapshot_fallback(
+                query=query,
+                mailbox_id=mailbox_id,
+                limit=capped,
+                since=since,
+                before=before,
+                search_fields=search_fields,
+                filters=filters,
+                mailbox_inventory_fn=mailbox_inventory_fn,
+            )
+        except MailStoreUnavailable as exc:
+            degraded = _mail_store_degraded_state(exc)
+            degraded["reason"] = "recent_mail_requires_trusted_metadata"
+            return [degraded]
+
     try:
         return _search_mail_applescript_scoped(
             query=query,

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apple-ecosystem-mcp"
-version = "0.6.7"
+version = "0.6.8"
 description = "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive."
 readme = "README.md"
 license = { text = "MIT" }
