@@ -85,7 +85,17 @@ def test_scheduled_task_run_returns_structured_result(monkeypatch, tmp_path):
 
     result = scheduled_tools.scheduled_tasks_run("daily-briefing")
 
-    assert result == {
+    assert {
+        key: result[key]
+        for key in (
+            "task_name",
+            "task_type",
+            "output_path",
+            "content",
+            "generated_at",
+            "success",
+        )
+    } == {
         "task_name": "daily-briefing",
         "task_type": "daily_briefing",
         "output_path": str(tmp_path / "reports" / "daily-briefing.md"),
@@ -93,6 +103,9 @@ def test_scheduled_task_run_returns_structured_result(monkeypatch, tmp_path):
         "generated_at": "2026-06-08T09:00:00",
         "success": True,
     }
+    assert result["open_url"].startswith("file://")
+    assert result["open_action"]["type"] == "open_url"
+    assert result["next_action"]["label"] == "Open report"
 
 
 def test_scheduled_task_tools_return_structured_errors(monkeypatch, tmp_path):

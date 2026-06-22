@@ -7,6 +7,10 @@ import sqlite3
 import shutil
 import tempfile
 import time
+from email import policy
+from email.message import EmailMessage, Message
+from email.parser import BytesParser
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +64,10 @@ REQUIRED_TABLES = {
 }
 SNAPSHOT_TTL_SECONDS = 900
 SNAPSHOT_STATE_FILENAME = "snapshot-state.json"
+MAIL_BODY_SCAN_DAYS_DEFAULT = 45
+MAIL_BODY_SCAN_MAX_FILES_DEFAULT = 2500
+MAIL_BODY_SCAN_DAYS_ENV = "APPLE_ECOSYSTEM_MCP_MAIL_BODY_SCAN_DAYS"
+MAIL_BODY_SCAN_MAX_FILES_ENV = "APPLE_ECOSYSTEM_MCP_MAIL_BODY_SCAN_MAX_FILES"
 FULL_DISK_ACCESS_SETTINGS = "System Settings > Privacy & Security > Full Disk Access"
 MAIL_PREFERENCES_PATH = (
     Path.home()
@@ -103,6 +111,16 @@ def default_accounts_db_path() -> Path:
     if override:
         return Path(override).expanduser()
     return ACCOUNTS_DB_PATH
+
+
+def default_mail_version_root() -> Path:
+    override = os.environ.get("APPLE_ECOSYSTEM_MCP_MAIL_ROOT")
+    if override:
+        return Path(override).expanduser()
+    envelope_path = default_envelope_index_path()
+    if envelope_path.name == "Envelope Index" and envelope_path.parent.name == "MailData":
+        return envelope_path.parent.parent
+    return Path.home() / "Library" / "Mail"
 
 
 def _snapshot_root() -> Path:
@@ -181,8 +199,6 @@ def refresh_mail_snapshot(*, source_path: Path | None = None, ttl_seconds: int =
     root = _snapshot_root()
     root.mkdir(parents=True, exist_ok=True)
     previous = get_mail_snapshot_state(include_expired=True)
-    if previous and previous.get("snapshot_dir"):
-        _cleanup_snapshot_dir(Path(str(previous["snapshot_dir"])))
 
     snapshot_dir = Path(tempfile.mkdtemp(prefix="snapshot-", dir=root))
     snapshot_db_path = snapshot_dir / "Envelope Index"
@@ -215,6 +231,8 @@ def refresh_mail_snapshot(*, source_path: Path | None = None, ttl_seconds: int =
         "copied_files": copied,
     }
     _write_snapshot_state(state)
+    if previous and previous.get("snapshot_dir") and previous.get("snapshot_dir") != str(snapshot_dir):
+        _cleanup_snapshot_dir(Path(str(previous["snapshot_dir"])))
     return state
 
 
@@ -290,6 +308,122 @@ def get_mail_store_message(identifier: str, *, db_path: Path | None = None) -> d
         ) from exc
     finally:
         conn.close()
+
+
+def read_mail_store_message_body(row: dict[str, Any], *, mail_root: Path | None = None) -> dict[str, Any] | None:
+    """Read a message body from the local .emlx file for an Inbox-scoped store row."""
+    path = find_mail_store_message_file(row, mail_root=mail_root)
+    if path is None:
+        return None
+    return read_mail_message_file(path)
+
+
+def read_mail_store_message_body_by_message_id(
+    identifier: str,
+    *,
+    mail_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Find an Inbox .emlx by RFC Message-ID and return its parsed body."""
+    path = find_mail_store_message_file_by_message_id(identifier, mail_root=mail_root)
+    if path is None:
+        return None
+    return read_mail_message_file(path)
+
+
+def read_mail_message_file(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = _read_emlx_message_bytes(path)
+    except OSError as exc:
+        raise MailStoreUnavailable(
+            "mail_message_file_unavailable",
+            "Mail message file could not be read",
+        ) from exc
+    if not raw:
+        return None
+
+    try:
+        message = BytesParser(policy=policy.default).parsebytes(raw)
+    except Exception as exc:
+        raise MailStoreUnavailable(
+            "mail_message_parse_failed",
+            "Mail message file could not be parsed",
+        ) from exc
+
+    body, content_type = _extract_message_body(message)
+    if not body:
+        return None
+    result = {
+        "body": body,
+        "body_content_type": content_type,
+        "body_source": "mail_store_emlx",
+    }
+    metadata = _message_metadata_from_file(message)
+    result.update({key: value for key, value in metadata.items() if value})
+    return result
+
+
+def find_mail_store_message_file(row: dict[str, Any], *, mail_root: Path | None = None) -> Path | None:
+    rowid = _clean_text(row.get("mail_object_id"))
+    if not rowid:
+        return None
+    mailbox_path = _clean_text(row.get("mailbox_path")) or _mailbox_path(_clean_text(row.get("mailbox_id")))
+    if not _is_inbox_mailbox_path(mailbox_path):
+        return None
+
+    account_token = _clean_text(row.get("account_token")) or _mailbox_account_token(_clean_text(row.get("mailbox_id")))
+    account_identifier = _account_identifier_from_token(account_token)
+    if not account_identifier:
+        return None
+
+    root = Path(mail_root) if mail_root else default_mail_version_root()
+    account_root = root / account_identifier
+    if not account_root.exists():
+        return None
+
+    mailbox_names = _unique_texts(
+        [
+            f"{mailbox_path}.mbox" if mailbox_path else "",
+            "INBOX.mbox",
+            "Inbox.mbox",
+        ]
+    )
+    filenames = [f"{rowid}.emlx", f"{rowid}.partial.emlx"]
+    for mailbox_name in mailbox_names:
+        mailbox_root = account_root / mailbox_name
+        if not mailbox_root.exists():
+            continue
+        for filename in filenames:
+            try:
+                match = next(mailbox_root.glob(f"**/Messages/{filename}"), None)
+            except OSError:
+                match = None
+            if match is not None:
+                return match
+    return None
+
+
+def find_mail_store_message_file_by_message_id(identifier: str, *, mail_root: Path | None = None) -> Path | None:
+    candidates = _message_id_header_candidates(identifier)
+    if not candidates:
+        return None
+    needle_bytes = [candidate.encode("utf-8", errors="ignore") for candidate in candidates]
+    root = Path(mail_root) if mail_root else default_mail_version_root()
+    if not root.exists():
+        return None
+
+    try:
+        inbox_roots = [
+            path
+            for path in root.glob("*/*.mbox")
+            if _is_inbox_mailbox_path(path.name.removesuffix(".mbox"))
+        ]
+    except OSError:
+        return None
+
+    for path in _recent_message_file_candidates(inbox_roots):
+        if _emlx_contains_message_id(path, needle_bytes):
+            return path
+    return None
 
 
 def list_mail_store_mailboxes(*, db_path: Path | None = None) -> list[dict[str, Any]]:
@@ -562,8 +696,10 @@ def _execute_get_message(
     needle = (identifier or "").strip()
     if not needle:
         raise MailStoreUnavailable("invalid_input", "Message identifier is required", recoverable=False)
+    header_candidates = _message_id_header_candidates(needle)
+    header_placeholders = ", ".join("?" for _ in header_candidates)
 
-    sql = """
+    sql = f"""
         select
             m.ROWID as rowid,
             m.message_id as internal_id,
@@ -600,22 +736,24 @@ def _execute_get_message(
         left join message_global_data g on g.message_id = m.message_id
         where m.deleted = 0
           and (
-            g.message_id_header = ?
+            g.message_id_header in ({header_placeholders})
             or cast(m.message_id as text) = ?
             or cast(m.ROWID as text) = ?
           )
         order by
             case
                 when g.message_id_header = ? then 0
-                when cast(m.message_id as text) = ? then 1
-                when cast(m.ROWID as text) = ? then 2
+                when g.message_id_header in ({header_placeholders}) then 1
+                when cast(m.message_id as text) = ? then 2
+                when cast(m.ROWID as text) = ? then 3
                 else 3
             end,
             m.date_received desc,
             m.ROWID desc
         limit 1
     """
-    row = conn.execute(sql, (needle, needle, needle, needle, needle, needle)).fetchone()
+    params = [*header_candidates, needle, needle, needle, *header_candidates, needle, needle]
+    row = conn.execute(sql, params).fetchone()
     if row is None:
         return None
     return _row_to_message(row, account_map=account_map)
@@ -683,6 +821,160 @@ def _clean_text(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _message_id_header_candidates(identifier: str) -> list[str]:
+    text = identifier.strip()
+    candidates = [text]
+    stripped = text.strip("<>")
+    if "@" in stripped:
+        candidates.append(f"<{stripped}>")
+        candidates.append(stripped)
+    return _unique_texts(candidates)
+
+
+def _unique_texts(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    output: list[str] = []
+    for value in values:
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        output.append(text)
+    return output
+
+
+def _is_inbox_mailbox_path(value: str | None) -> bool:
+    if not value:
+        return False
+    return value.strip().strip("/").rsplit("/", 1)[-1].casefold() == "inbox"
+
+
+def _read_emlx_message_bytes(path: Path) -> bytes:
+    with path.open("rb") as handle:
+        first_line = handle.readline()
+        try:
+            length = int(first_line.strip().split()[0])
+        except (IndexError, ValueError):
+            return first_line + handle.read()
+        if length <= 0:
+            return handle.read()
+        return handle.read(length)
+
+
+def _extract_message_body(message: Message | EmailMessage) -> tuple[str, str]:
+    part = None
+    if isinstance(message, EmailMessage):
+        part = message.get_body(preferencelist=("plain", "html"))
+    if part is None:
+        part = _first_text_part(message)
+    if part is None:
+        return "", ""
+    content_type = part.get_content_type()
+    try:
+        content = part.get_content()
+    except Exception:
+        payload = part.get_payload(decode=True)
+        charset = part.get_content_charset() or "utf-8"
+        if isinstance(payload, bytes):
+            content = payload.decode(charset, errors="replace")
+        else:
+            content = str(payload or "")
+    if isinstance(content, bytes):
+        charset = part.get_content_charset() or "utf-8"
+        content = content.decode(charset, errors="replace")
+    return str(content or ""), content_type
+
+
+def _message_metadata_from_file(message: Message | EmailMessage) -> dict[str, str]:
+    result: dict[str, str] = {}
+    message_id = _clean_text(message.get("Message-ID"))
+    if message_id:
+        result["id"] = message_id
+        result["message_id"] = message_id
+    subject = _clean_text(message.get("Subject"))
+    if subject:
+        result["subject"] = subject
+    sender = _clean_text(message.get("From"))
+    if sender:
+        result["sender"] = sender
+    date_header = _clean_text(message.get("Date"))
+    if date_header:
+        try:
+            parsed = parsedate_to_datetime(date_header)
+        except (TypeError, ValueError, IndexError):
+            result["date"] = date_header
+        else:
+            result["date"] = parsed.isoformat(timespec="seconds")
+    return result
+
+
+def _recent_message_file_candidates(inbox_roots: list[Path]) -> list[Path]:
+    max_age_days = _env_int(MAIL_BODY_SCAN_DAYS_ENV, MAIL_BODY_SCAN_DAYS_DEFAULT)
+    max_files = _env_int(MAIL_BODY_SCAN_MAX_FILES_ENV, MAIL_BODY_SCAN_MAX_FILES_DEFAULT)
+    cutoff = time.time() - max(1, max_age_days) * 86_400
+    candidates: list[tuple[float, Path]] = []
+    for inbox_root in inbox_roots:
+        try:
+            paths = inbox_root.glob("**/Messages/*.emlx")
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                continue
+            candidates.append((mtime, path))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [path for _, path in candidates[: max(1, max_files)]]
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _first_text_part(message: Message | EmailMessage) -> Message | EmailMessage | None:
+    if not message.is_multipart():
+        if message.get_content_maintype() == "text":
+            return message
+        return None
+    fallback = None
+    for part in message.walk():
+        if part.is_multipart() or part.get_content_maintype() != "text":
+            continue
+        disposition = (part.get_content_disposition() or "").casefold()
+        if disposition == "attachment":
+            continue
+        if part.get_content_type() == "text/plain":
+            return part
+        if fallback is None:
+            fallback = part
+    return fallback
+
+
+def _emlx_contains_message_id(path: Path, needles: list[bytes]) -> bool:
+    try:
+        with path.open("rb") as handle:
+            first_line = handle.readline()
+            try:
+                length = int(first_line.strip().split()[0])
+            except (IndexError, ValueError):
+                length = 262_144
+            chunk = handle.read(min(max(length, 1), 262_144))
+    except OSError:
+        return False
+    lower_chunk = chunk.lower()
+    return any(needle and needle.lower() in lower_chunk for needle in needles)
 
 
 def _mailbox_path(url: str | None) -> str | None:

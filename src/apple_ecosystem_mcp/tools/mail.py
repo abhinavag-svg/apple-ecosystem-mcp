@@ -15,6 +15,8 @@ from ..mail_store import (
     get_mail_store_message,
     inspect_mail_store,
     list_mail_store_mailboxes as store_list_mailboxes,
+    read_mail_store_message_body,
+    read_mail_store_message_body_by_message_id,
     refresh_mail_snapshot as store_refresh_mail_snapshot,
 )
 from ..mail_service import (
@@ -29,6 +31,12 @@ from ..preferences import PreferencesStore
 from ..prompt_contract import tool_contract
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
+from .actions import (
+    open_app_next_action,
+    open_url_next_action,
+    terminal_command_next_action,
+    tool_next_action,
+)
 
 # Result-size policy per CLAUDE.md
 _MAIL_BODY_MAX_CHARS = 8_000
@@ -68,6 +76,201 @@ def _normalize_optional_bool(value: Any) -> bool | None:
         if lowered == "false":
             return False
     return bool(value)
+
+
+def _coerce_limit(value: int | str, *, default: int = MAIL_SEARCH_DEFAULT) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("limit must be an integer") from exc
+
+
+def _coerce_search_fields(value: list[str] | str | None) -> list[str] | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        if text[0] in "[{":
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise ValueError("search_fields must be a list or JSON list string") from exc
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed if str(item).strip()]
+            if isinstance(parsed, str):
+                return [parsed]
+            raise ValueError("search_fields JSON must decode to a list")
+        return [item.strip() for item in text.split(",") if item.strip()]
+    raise ValueError("search_fields must be a list or string")
+
+
+def _coerce_filters(value: dict | str | None) -> dict | None:
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError("filters must be an object or JSON object string") from exc
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError("filters must be an object or JSON object string")
+
+
+def _coerce_optional_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"null", "none", "missing value"}:
+        return None
+    return text
+
+
+def _tool_next_action(tool: str, arguments: dict[str, Any], *, label: str) -> dict[str, Any]:
+    return tool_next_action(tool, arguments, label=label)
+
+
+def _open_url_next_action(url: str, *, label: str) -> dict[str, Any]:
+    return open_url_next_action(url, label=label)
+
+
+def _open_mail_app_next_action(*, label: str = "Open Mail") -> dict[str, Any]:
+    return open_app_next_action("Mail", label=label)
+
+
+def _terminal_command_next_action(command: str, *, label: str) -> dict[str, Any]:
+    return terminal_command_next_action(command, label=label)
+
+
+def _message_open_url_from_id(message_id: Any) -> str | None:
+    text = _coerce_optional_text(message_id)
+    if not text or "@" not in text:
+        return None
+    return _mail_message_url(text)
+
+
+def _add_message_actions(row: dict[str, Any]) -> dict[str, Any]:
+    message_id = row.get("id") or row.get("message_id")
+    if not message_id:
+        return row
+    row.setdefault(
+        "next_action",
+        _tool_next_action(
+            "mail_get_thread",
+            {"message_id": str(message_id), "include_body": True},
+            label="Read email content",
+        ),
+    )
+    open_url = _message_open_url_from_id(message_id)
+    if open_url:
+        row.setdefault("open_url", open_url)
+        row.setdefault("open_action", _open_url_next_action(open_url, label="Open in Mail"))
+    return row
+
+
+def _add_message_actions_to_rows(rows: list[dict]) -> list[dict]:
+    normalized: list[dict] = []
+    for row in rows:
+        if isinstance(row, dict) and not row.get("error"):
+            normalized.append(_add_message_actions(dict(row)))
+        else:
+            normalized.append(row)
+    return normalized
+
+
+def _store_body_payload(scoped: dict[str, Any] | None, *, message_id: str | None = None) -> dict[str, Any] | None:
+    try:
+        if scoped:
+            fallback = read_mail_store_message_body(scoped)
+        elif message_id:
+            fallback = read_mail_store_message_body_by_message_id(message_id)
+        else:
+            fallback = None
+    except MailStoreUnavailable:
+        return None
+    if not fallback:
+        return None
+    body = _truncate_body(_strip_html_and_base64(str(fallback.get("body") or "")))
+    if not body:
+        return None
+    payload = {
+        "body": body,
+        "body_available": True,
+        "body_source": fallback.get("body_source") or "mail_store_emlx",
+    }
+    for key in ("id", "message_id", "subject", "sender", "date"):
+        if fallback.get(key):
+            payload.setdefault(key, fallback[key])
+    if fallback.get("body_content_type"):
+        payload["body_content_type"] = fallback["body_content_type"]
+    return payload
+
+
+def _apply_store_body_fallback(
+    data: dict[str, Any],
+    scoped: dict[str, Any] | None,
+    reason: str,
+    *,
+    message_id: str | None = None,
+) -> bool:
+    payload = _store_body_payload(scoped, message_id=message_id)
+    if not payload:
+        return False
+    for key, value in payload.items():
+        if key in {"id", "message_id", "subject", "sender", "date"}:
+            data.setdefault(key, value)
+        else:
+            data[key] = value
+    data["body_fallback_reason"] = reason
+    data.pop("body_unavailable", None)
+    return True
+
+
+def _degraded_thread_result(
+    message_id: str,
+    reason: str,
+    *,
+    scoped: dict[str, Any] | None = None,
+    include_body: bool = True,
+) -> dict[str, Any]:
+    result: dict[str, Any] = dict(scoped or {})
+    result.setdefault("id", message_id)
+    result.setdefault("message_id", message_id)
+    result["attachments"] = []
+    if include_body:
+        if not _apply_store_body_fallback(result, scoped, reason, message_id=message_id):
+            result["body"] = ""
+            result["body_available"] = False
+            result["body_unavailable"] = reason
+    else:
+        result.pop("body", None)
+
+    open_url = _message_open_url_from_id(message_id)
+    if open_url:
+        result.setdefault("open_url", open_url)
+        result.setdefault("open_action", _open_url_next_action(open_url, label="Open in Mail"))
+        result.setdefault("next_action", _open_url_next_action(open_url, label="Open in Mail"))
+    else:
+        result.setdefault(
+            "next_action",
+            _tool_next_action(
+                "mail_open_message",
+                {"message_id": message_id},
+                label="Open in Mail",
+            ),
+        )
+    return result
 
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
@@ -312,23 +515,24 @@ def _mail_list_mailboxes_applescript() -> list[dict]:
 def mail_search(
     query: str,
     mailbox_id: str | None = None,
-    limit: int = MAIL_SEARCH_DEFAULT,
+    limit: int | str = MAIL_SEARCH_DEFAULT,
     since: str | None = None,
     before: str | None = None,
-    search_fields: list[str] | None = None,
-    filters: dict | None = None,
+    search_fields: list[str] | str | None = None,
+    filters: dict | str | None = None,
 ) -> list[dict]:
     """Search Mail by literal query text or explicit fielded filters."""
-    return service_search_mail(
-        query,
-        mailbox_id=mailbox_id,
-        limit=limit,
-        since=since,
-        before=before,
-        search_fields=search_fields,
-        filters=filters,
+    rows = service_search_mail(
+        str(query or ""),
+        mailbox_id=_coerce_optional_text(mailbox_id),
+        limit=_coerce_limit(limit),
+        since=_coerce_optional_text(since),
+        before=_coerce_optional_text(before),
+        search_fields=_coerce_search_fields(search_fields),
+        filters=_coerce_filters(filters),
         mailbox_inventory_fn=mail_list_mailboxes,
     )
+    return _add_message_actions_to_rows(rows)
 
 
 @mcp.tool(
@@ -336,21 +540,22 @@ def mail_search(
     annotations=ToolAnnotations(title=tool_contract("mail_recent").title, readOnlyHint=True),
 )
 def mail_recent(
-    limit: int = MAIL_SEARCH_DEFAULT,
+    limit: int | str = MAIL_SEARCH_DEFAULT,
     since: str | None = None,
     before: str | None = None,
     mailbox_id: str | None = None,
-    filters: dict | None = None,
+    filters: dict | str | None = None,
 ) -> list[dict]:
     """Return the most recent Mail messages in chronological order."""
-    return service_recent_mail(
-        mailbox_id=mailbox_id,
-        limit=limit,
-        since=since,
-        before=before,
-        filters=filters,
+    rows = service_recent_mail(
+        mailbox_id=_coerce_optional_text(mailbox_id),
+        limit=_coerce_limit(limit),
+        since=_coerce_optional_text(since),
+        before=_coerce_optional_text(before),
+        filters=_coerce_filters(filters),
         mailbox_inventory_fn=mail_list_mailboxes,
     )
+    return _add_message_actions_to_rows(rows)
 
 
 @mcp.tool(
@@ -358,7 +563,13 @@ def mail_recent(
 )
 def mail_diagnostics() -> dict:
     """Inspect local Apple Mail store availability and access state."""
-    return inspect_mail_store()
+    result = inspect_mail_store()
+    if not result.get("ok"):
+        result.setdefault(
+            "next_action",
+            _tool_next_action("mail_access_setup", {}, label="Show Mail access options"),
+        )
+    return result
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Mail Access Setup"))
@@ -398,6 +609,11 @@ def mail_access_setup(open_settings: bool = False) -> dict:
         ],
         "settings_path": "System Settings > Privacy & Security > Full Disk Access",
         "settings_url": _FULL_DISK_ACCESS_SETTINGS_URL,
+        "open_url": _FULL_DISK_ACCESS_SETTINGS_URL,
+        "next_action": _open_url_next_action(
+            _FULL_DISK_ACCESS_SETTINGS_URL,
+            label="Open Full Disk Access settings",
+        ),
     }
     if open_settings:
         try:
@@ -421,6 +637,11 @@ def refresh_mail_snapshot(ttl_seconds: int = 900) -> dict:
                 "Run apple-ecosystem-mcp mail refresh-snapshot from Terminal, or grant Full Disk Access to the installed runtime."
             )
             payload["settings_path"] = "System Settings > Privacy & Security > Full Disk Access"
+            payload["open_url"] = _FULL_DISK_ACCESS_SETTINGS_URL
+            payload["next_action"] = _terminal_command_next_action(
+                "apple-ecosystem-mcp mail refresh-snapshot --json",
+                label="Create Mail snapshot from Terminal",
+            )
         return payload
     return {
         "ok": True,
@@ -431,6 +652,11 @@ def refresh_mail_snapshot(ttl_seconds: int = 900) -> dict:
         "expires_at": snapshot["expires_at"],
         "ttl_seconds": snapshot["ttl_seconds"],
         "copied_files": snapshot["copied_files"],
+        "next_action": _tool_next_action(
+            "mail_recent",
+            {"limit": 20},
+            label="Read recent Mail with snapshot fallback",
+        ),
     }
 
 
@@ -640,14 +866,12 @@ def mail_get_thread(message_id: str, include_body: bool = True) -> dict:
             timeout=15,
         )
     except RuntimeError as exc:
-        if include_body and scoped:
-            degraded = dict(scoped)
-            degraded["attachments"] = []
-            degraded["body"] = ""
-            degraded["body_unavailable"] = str(exc)
-            degraded["body_available"] = False
-            return degraded
-        raise
+        return _degraded_thread_result(
+            message_id,
+            str(exc),
+            scoped=scoped,
+            include_body=include_body,
+        )
     data = _parse_json(raw)
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected mail_get_thread payload shape")
@@ -656,18 +880,13 @@ def mail_get_thread(message_id: str, include_body: bool = True) -> dict:
         scoped_expected_account = str(scoped.get("account_name") or "")
         returned_account = str(data.get("account_name") or "")
         if scoped_expected_account and returned_account and returned_account != scoped_expected_account:
-            degraded = dict(scoped)
-            degraded["attachments"] = []
-            if include_body:
-                degraded["body"] = ""
-                degraded["body_unavailable"] = (
-                    "Scoped AppleScript read returned a different account "
-                    f"({returned_account}) than the Mail store record ({scoped_expected_account})"
-                )
-                degraded["body_available"] = False
-            else:
-                degraded.pop("body", None)
-            return degraded
+            return _degraded_thread_result(
+                message_id,
+                "Scoped AppleScript read returned a different account "
+                f"({returned_account}) than the Mail store record ({scoped_expected_account})",
+                scoped=scoped,
+                include_body=include_body,
+            )
         if not data.get("mailbox_id"):
             data["mailbox_id"] = scoped.get("mailbox_id", "")
         if not data.get("account_name"):
@@ -679,7 +898,16 @@ def mail_get_thread(message_id: str, include_body: bool = True) -> dict:
         body = data.get("body", "") or ""
         body = _strip_html_and_base64(body)
         data["body"] = _truncate_body(body)
-        data["body_available"] = data["body"] != ""
+        if data["body"]:
+            data["body_available"] = True
+        elif not _apply_store_body_fallback(
+            data,
+            scoped,
+            "AppleScript returned an empty body",
+            message_id=message_id,
+        ):
+            data["body_available"] = False
+            data["body_unavailable"] = "AppleScript returned an empty body"
     else:
         data.pop("body", None)
 
@@ -716,9 +944,9 @@ on run argv
 
     tell application "Mail"
         if fromAccount is not "" then
-            set msg to make new outgoing message with properties {subject:subj, content:bodyText, visible:false, sender:fromAccount}
+            set msg to make new outgoing message with properties {subject:subj, content:bodyText, visible:(not sendFlag), sender:fromAccount}
         else
-            set msg to make new outgoing message with properties {subject:subj, content:bodyText, visible:false}
+            set msg to make new outgoing message with properties {subject:subj, content:bodyText, visible:(not sendFlag)}
         end if
         tell msg
             repeat with addr in toList
@@ -736,7 +964,12 @@ on run argv
             end try
             return "{\"success\":true,\"message_id\":" & my jsonString(mid) & "}"
         else
-            return "{\"success\":true,\"draft_created\":true}"
+            activate
+            set draftId to ""
+            try
+                set draftId to id of msg as string
+            end try
+            return "{\"success\":true,\"draft_created\":true,\"draft_visible\":true,\"draft_id\":" & my jsonString(draftId) & ",\"open_mail\":{\"app\":\"Mail\",\"action\":\"activate\",\"already_open\":true}}"
         end if
     end tell
 end run
@@ -815,6 +1048,19 @@ def mail_send(
                 "from_account": from_account,
                 "reply_to_id": reply_to_id,
             },
+            "next_action": _tool_next_action(
+                "mail_send",
+                {
+                    "to": list(to),
+                    "subject": subject,
+                    "body": body,
+                    "cc": list(cc),
+                    "reply_to_id": reply_to_id,
+                    "from_account": from_account,
+                    "dry_run": False,
+                },
+                label="Send this email",
+            ),
         }
 
     _validate_from_account(from_account)
@@ -834,6 +1080,7 @@ def mail_send(
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected mail_send payload shape")
     data.setdefault("sent", True)
+    data.setdefault("next_action", _open_mail_app_next_action(label="Open Mail"))
     return data
 
 
@@ -863,6 +1110,18 @@ def mail_create_draft(
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected mail_create_draft payload shape")
     data.setdefault("draft_created", True)
+    data.setdefault("draft_visible", True)
+    data.setdefault("open_url", None)
+    data.setdefault(
+        "open_mail",
+        {
+            "app": "Mail",
+            "action": "activate",
+            "already_open": True,
+        },
+    )
+    data.setdefault("next_action", _open_mail_app_next_action(label="Review draft in Mail"))
+    data.setdefault("next_step", "Review and send the visible draft in Mail.")
     return data
 
 
@@ -887,7 +1146,10 @@ def _canonical_message_id_for_open(identifier: str) -> tuple[str | None, dict[st
 
 
 def _mail_message_url(message_id: str) -> str:
-    return "message://" + quote(message_id, safe="")
+    text = (message_id or "").strip()
+    if "@" in text and not (text.startswith("<") and text.endswith(">")):
+        text = f"<{text.strip('<>')}>"
+    return "message://" + quote(text, safe="")
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Open Mail Message"))
@@ -900,6 +1162,11 @@ def mail_open_message(message_id: str, dry_run: bool = False) -> dict:
             "message": "Message could not be resolved to a canonical RFC Message-ID for Mail.app opening.",
             "recoverable": True,
             "message_id": message_id,
+            "next_action": _tool_next_action(
+                "mail_search",
+                {"query": message_id, "limit": 10},
+                label="Search for this email",
+            ),
         }
 
     url = _mail_message_url(canonical_id)
@@ -907,6 +1174,8 @@ def mail_open_message(message_id: str, dry_run: bool = False) -> dict:
         "opened": False,
         "message_id": canonical_id,
         "url": url,
+        "open_url": url,
+        "next_action": _open_url_next_action(url, label="Open in Mail"),
     }
     if row:
         result.update(
@@ -934,6 +1203,7 @@ def mail_open_message(message_id: str, dry_run: bool = False) -> dict:
         }
 
     result["opened"] = True
+    result["next_action"] = _open_mail_app_next_action(label="Show Mail")
     return result
 
 
@@ -1028,6 +1298,7 @@ def mail_move_message(message_id: str, mailbox_id: str) -> dict:
         raise RuntimeError("Unexpected mail_move_message payload shape")
     data["message_id"] = message_id
     data["mailbox_id"] = resolved_mailbox_id
+    _add_message_actions(data)
     return data
 
 
@@ -1086,6 +1357,7 @@ def mail_flag_message(message_id: str, flagged: bool) -> dict:
         raise RuntimeError("Unexpected mail_flag_message payload shape")
     data["message_id"] = message_id
     data["flagged"] = flagged
+    _add_message_actions(data)
     return data
 
 
@@ -1138,10 +1410,19 @@ end run
 def mail_delete(message_id: str, confirm: bool = False) -> dict:
     """Delete a Mail message by canonical id. Requires confirm=True."""
     if not confirm:
-        return {"preview": f"Would delete message: {message_id}", "confirmed": False}
+        return {
+            "preview": f"Would delete message: {message_id}",
+            "confirmed": False,
+            "next_action": _tool_next_action(
+                "mail_delete",
+                {"message_id": message_id, "confirm": True},
+                label="Confirm delete",
+            ),
+        }
     raw = run_applescript(_DELETE_SCRIPT, message_id)
     data = _parse_json(raw) or {"success": True}
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected mail_delete payload shape")
     data["message_id"] = message_id
+    data.setdefault("next_action", _open_mail_app_next_action(label="Open Mail"))
     return data

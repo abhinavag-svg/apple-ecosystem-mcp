@@ -12,6 +12,7 @@ from mcp.types import ToolAnnotations
 
 from ..permissions import ICLOUD_ROOT
 from ..server import mcp
+from .actions import file_open_url, open_url_next_action, tool_next_action
 
 # Result-size policy per CLAUDE.md
 _ICLOUD_READ_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
@@ -44,13 +45,38 @@ def _safe(user_path: str) -> Path:
     return resolved
 
 
+def _relative_path(path: Path) -> str:
+    return "/" + str(path.relative_to(ICLOUD_ROOT))
+
+
+def _add_path_actions(payload: dict, path: Path, *, action_label: str | None = None) -> dict:
+    open_url = file_open_url(path)
+    payload.setdefault("open_url", open_url)
+    payload.setdefault("open_action", open_url_next_action(open_url, label=action_label or "Open in Finder"))
+
+    rel_path = str(payload.get("path") or _relative_path(path))
+    is_dir = bool(payload.get("is_dir")) or payload.get("kind") == "directory" or path.is_dir()
+    is_file = bool(payload.get("is_file")) or payload.get("kind") == "file" or path.is_file()
+    if is_dir:
+        payload.setdefault(
+            "next_action",
+            tool_next_action("icloud_list", {"path": rel_path}, label="List folder"),
+        )
+    elif is_file:
+        payload.setdefault(
+            "next_action",
+            tool_next_action("icloud_read", {"path": rel_path}, label="Read file"),
+        )
+    return payload
+
+
 def _metadata(path: Path) -> dict:
     stat = path.stat()
     is_dir = path.is_dir()
-    return {
-        "id": "/" + str(path.relative_to(ICLOUD_ROOT)),
+    return _add_path_actions({
+        "id": _relative_path(path),
         "name": path.name,
-        "path": "/" + str(path.relative_to(ICLOUD_ROOT)),
+        "path": _relative_path(path),
         "kind": "directory" if is_dir else "file",
         "account_name": None,
         "writable": os.access(path, os.W_OK),
@@ -60,7 +86,7 @@ def _metadata(path: Path) -> dict:
         "created": stat.st_ctime,
         "is_dir": is_dir,
         "is_file": path.is_file(),
-    }
+    }, path)
 
 
 def _validate_encoding(encoding: str) -> str:
@@ -144,29 +170,32 @@ def icloud_read(path: str, encoding: str = "auto") -> dict:
         # Check size limit
         size = target.stat().st_size
         if size > _ICLOUD_READ_MAX_BYTES:
-            return {
+            payload = _add_path_actions({
+                "path": _relative_path(target),
                 "error": f"File exceeds 10 MB limit",
                 "size_bytes": size,
-            }
+            }, target)
+            payload["next_action"] = open_url_next_action(payload["open_url"], label="Open file")
+            return payload
 
         # Read raw bytes
         raw_bytes = target.read_bytes()
 
         if encoding == "base64":
-            return {
-                "path": "/" + str(target.relative_to(ICLOUD_ROOT)),
+            return _add_path_actions({
+                "path": _relative_path(target),
                 "content": base64.b64encode(raw_bytes).decode("ascii"),
                 "encoding": "base64",
                 "size_bytes": size,
-            }
+            }, target)
 
         if encoding == "utf-8":
-            return {
-                "path": "/" + str(target.relative_to(ICLOUD_ROOT)),
+            return _add_path_actions({
+                "path": _relative_path(target),
                 "content": raw_bytes.decode("utf-8"),
                 "encoding": "utf-8",
                 "size_bytes": size,
-            }
+            }, target)
 
         # Detect encoding with charset-normalizer
         detection = from_bytes(raw_bytes).best()
@@ -179,12 +208,12 @@ def icloud_read(path: str, encoding: str = "auto") -> dict:
             content = raw_bytes.decode("utf-8", errors="replace")
             encoding = "utf-8"
 
-        return {
-            "path": "/" + str(target.relative_to(ICLOUD_ROOT)),
+        return _add_path_actions({
+            "path": _relative_path(target),
             "content": content,
             "encoding": encoding,
             "size_bytes": size,
-        }
+        }, target)
     except RuntimeError:
         raise
     except Exception as e:
@@ -222,11 +251,11 @@ def icloud_write(
         else:
             target.write_text(content, encoding="utf-8")
 
-        return {
-            "path": "/" + str(target.relative_to(ICLOUD_ROOT)),
+        return _add_path_actions({
+            "path": _relative_path(target),
             "size_bytes": target.stat().st_size,
             "success": True,
-        }
+        }, target)
     except RuntimeError:
         raise
     except Exception as e:
@@ -281,11 +310,12 @@ def icloud_move(src: str, dst: str) -> dict:
         # Move/rename the file
         src_path.rename(dst_path)
 
-        return {
-            "src": "/" + str(src_path.relative_to(ICLOUD_ROOT)),
-            "dst": "/" + str(dst_path.relative_to(ICLOUD_ROOT)),
+        return _add_path_actions({
+            "src": _relative_path(src_path),
+            "dst": _relative_path(dst_path),
+            "path": _relative_path(dst_path),
             "success": True,
-        }
+        }, dst_path)
     except RuntimeError:
         raise
     except Exception as e:
@@ -302,10 +332,17 @@ def icloud_delete(path: str, confirm: bool = False) -> dict:
             raise RuntimeError(f"Path does not exist: {path}")
 
         if not confirm:
-            return {
+            payload = _add_path_actions({
                 "preview": f"Would delete: {path}",
+                "path": _relative_path(target),
                 "confirmed": False,
-            }
+            }, target)
+            payload["next_action"] = tool_next_action(
+                "icloud_delete",
+                {"path": path, "confirm": True},
+                label="Confirm delete file",
+            )
+            return payload
 
         # Delete the file or directory
         if target.is_dir():
@@ -315,7 +352,7 @@ def icloud_delete(path: str, confirm: bool = False) -> dict:
             target.unlink()
 
         return {
-            "path": "/" + str(target.relative_to(ICLOUD_ROOT)),
+            "path": _relative_path(target),
             "success": True,
         }
     except RuntimeError:

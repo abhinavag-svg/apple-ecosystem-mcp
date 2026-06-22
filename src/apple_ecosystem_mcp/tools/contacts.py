@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript
 from ..native_provider import NativeProviderUnavailable, try_native
 from ..server import mcp
+from .actions import open_app_next_action, open_url_next_action, tool_next_action
 
 _SEARCH_LIMIT_DEFAULT = 10
 _SEARCH_LIMIT_MAX = 50
@@ -40,6 +42,70 @@ def _normalize_labeled_items(items) -> list[dict]:
 
 def _first_labeled_value(items: list[dict]) -> str | None:
     return items[0]["value"] if items else None
+
+
+def _mailto_url(email: str) -> str:
+    return "mailto:" + quote(email, safe="@.+-_")
+
+
+def _contact_email(record: dict) -> str | None:
+    email = _nn(record.get("email"))
+    if email:
+        return str(email)
+    emails = _normalize_labeled_items(record.get("emails"))
+    return _first_labeled_value(emails)
+
+
+def _add_contact_actions(record: dict, *, detail: bool = False) -> dict:
+    contact_id = _nn(record.get("id"))
+    email = _contact_email(record)
+    if email:
+        url = _mailto_url(email)
+        record.setdefault("email_url", url)
+        record.setdefault("open_url", url)
+        record.setdefault("open_action", open_url_next_action(url, label="Email contact"))
+    if detail:
+        if email:
+            record.setdefault("next_action", open_url_next_action(_mailto_url(email), label="Email contact"))
+    elif contact_id:
+        record.setdefault(
+            "next_action",
+            tool_next_action("contacts_get", {"contact_id": str(contact_id)}, label="View contact details"),
+        )
+    return record
+
+
+def _contacts_open_app_action(*, label: str = "Open Contacts") -> dict:
+    return open_app_next_action("Contacts", label=label)
+
+
+def _contact_success_payload(contact_id: str | None, *, email: str | None = None) -> dict:
+    payload: dict = {"id": contact_id, "success": True}
+    if email:
+        payload["email"] = email
+    if contact_id:
+        payload["next_action"] = tool_next_action(
+            "contacts_get",
+            {"contact_id": str(contact_id)},
+            label="View contact details",
+        )
+    else:
+        payload["next_action"] = _contacts_open_app_action()
+    return _add_contact_actions(payload, detail=False)
+
+
+def _add_contact_group_action(record: dict) -> dict:
+    name = _nn(record.get("name"))
+    if name:
+        record.setdefault(
+            "next_action",
+            tool_next_action(
+                "contacts_search",
+                {"query": "", "group": str(name)},
+                label="List group contacts",
+            ),
+        )
+    return record
 
 
 _SEARCH_SCRIPT = r"""
@@ -605,17 +671,19 @@ def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT, group: str |
         email = _nn(row.get("email")) or _first_labeled_value(emails)
         phone = _nn(row.get("phone")) or _first_labeled_value(phones)
         results.append(
-            {
-                "id": row.get("id"),
-                "first": _nn(row.get("first")),
-                "last": _nn(row.get("last")),
-                "email": email,
-                "phone": phone,
-                "company": _nn(row.get("company")),
-                "emails": emails,
-                "phones": phones,
-                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
-            }
+            _add_contact_actions(
+                {
+                    "id": row.get("id"),
+                    "first": _nn(row.get("first")),
+                    "last": _nn(row.get("last")),
+                    "email": email,
+                    "phone": phone,
+                    "company": _nn(row.get("company")),
+                    "emails": emails,
+                    "phones": phones,
+                    "groups": [g for g in (row.get("groups") or []) if _nn(g)],
+                }
+            )
         )
     return results
 
@@ -633,17 +701,19 @@ def _contacts_search_applescript(query: str, capped: int, group: str | None) -> 
         email = _nn(row.get("email")) or _first_labeled_value(emails)
         phone = _nn(row.get("phone")) or _first_labeled_value(phones)
         results.append(
-            {
-                "id": row.get("id"),
-                "first": _nn(row.get("first")),
-                "last": _nn(row.get("last")),
-                "email": email,
-                "phone": phone,
-                "company": _nn(row.get("company")),
-                "emails": emails,
-                "phones": phones,
-                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
-            }
+            _add_contact_actions(
+                {
+                    "id": row.get("id"),
+                    "first": _nn(row.get("first")),
+                    "last": _nn(row.get("last")),
+                    "email": email,
+                    "phone": phone,
+                    "company": _nn(row.get("company")),
+                    "emails": emails,
+                    "phones": phones,
+                    "groups": [g for g in (row.get("groups") or []) if _nn(g)],
+                }
+            )
         )
     return results
 
@@ -690,7 +760,7 @@ def contacts_get(contact_id: str) -> dict:
     }
     if truncated:
         result["notes_truncated"] = True
-    return result
+    return _add_contact_actions(result, detail=True)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Create Contact"))
@@ -718,7 +788,7 @@ def contacts_create(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict) and data.get("id"):
-        return {"id": data["id"], "success": True}
+        return _contact_success_payload(str(data["id"]), email=email)
 
     pid = run_applescript(
         _CREATE_SCRIPT,
@@ -728,7 +798,7 @@ def contacts_create(
         phone or "",
         company or "",
     )
-    return {"id": pid, "success": True}
+    return _contact_success_payload(pid, email=email)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Update Contact"))
@@ -758,7 +828,7 @@ def contacts_update(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict) and data.get("id"):
-        return {"id": data["id"], "success": True}
+        return _contact_success_payload(str(data["id"]), email=email)
 
     pid = run_applescript(
         _UPDATE_SCRIPT,
@@ -769,7 +839,7 @@ def contacts_update(
         phone if phone is not None else sentinel,
         company if company is not None else sentinel,
     )
-    return {"id": pid or contact_id, "success": True}
+    return _contact_success_payload(pid or contact_id, email=email)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Contact", destructiveHint=True))
@@ -781,14 +851,22 @@ def contacts_delete(contact_id: str, confirm: bool = False) -> dict:
             label = " ".join(str(part) for part in [preview.get("first"), preview.get("last")] if part) or contact_id
         except RuntimeError:
             label = contact_id
-        return {"preview": f"Would delete contact: {label}", "confirmed": False}
+        return {
+            "preview": f"Would delete contact: {label}",
+            "confirmed": False,
+            "next_action": tool_next_action(
+                "contacts_delete",
+                {"contact_id": contact_id, "confirm": True},
+                label="Confirm delete contact",
+            ),
+        }
     try:
         data = try_native("contacts", "delete", {"contact_id": contact_id}, timeout=15)
     except NativeProviderUnavailable as exc:
         raise RuntimeError("contacts_delete requires the bundled native helper") from exc
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected contacts delete payload")
-    return {"id": data.get("id") or contact_id, "success": True}
+    return {"id": data.get("id") or contact_id, "success": True, "next_action": _contacts_open_app_action()}
 
 
 def _birthday_rows(mode: str, days: int = 30) -> list[dict]:
@@ -804,18 +882,20 @@ def _birthday_rows(mode: str, days: int = 30) -> list[dict]:
         emails = _normalize_labeled_items(row.get("emails"))
         phones = _normalize_labeled_items(row.get("phones"))
         results.append(
-            {
-                "id": row.get("id"),
-                "first": _nn(row.get("first")),
-                "last": _nn(row.get("last")),
-                "email": _nn(row.get("email")) or _first_labeled_value(emails),
-                "phone": _nn(row.get("phone")) or _first_labeled_value(phones),
-                "company": _nn(row.get("company")),
-                "birthday": _nn(row.get("birthday")),
-                "emails": emails,
-                "phones": phones,
-                "groups": [g for g in (row.get("groups") or []) if _nn(g)],
-            }
+            _add_contact_actions(
+                {
+                    "id": row.get("id"),
+                    "first": _nn(row.get("first")),
+                    "last": _nn(row.get("last")),
+                    "email": _nn(row.get("email")) or _first_labeled_value(emails),
+                    "phone": _nn(row.get("phone")) or _first_labeled_value(phones),
+                    "company": _nn(row.get("company")),
+                    "birthday": _nn(row.get("birthday")),
+                    "emails": emails,
+                    "phones": phones,
+                    "groups": [g for g in (row.get("groups") or []) if _nn(g)],
+                }
+            )
         )
     return results
 
@@ -884,4 +964,4 @@ def contacts_list_groups(include_metadata: bool = False) -> list[str] | list[dic
                         "default_candidate": idx == 0,
                     }
                 )
-    return normalized
+    return [_add_contact_group_action(item) for item in normalized]

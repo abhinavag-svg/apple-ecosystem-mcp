@@ -14,6 +14,7 @@ from ..scheduled_tasks import (
 )
 from ..scheduler_runner import WorkflowRunError, run_scheduled_task_by_name
 from ..server import mcp
+from .actions import file_open_url, open_url_next_action, tool_next_action
 
 
 def _store() -> ScheduledTaskStore:
@@ -50,17 +51,31 @@ def _error(
 def _task_payload(task) -> dict[str, Any]:
     payload = task.to_dict()
     payload["task_type"] = task.task_type
+    if payload.get("name"):
+        payload.setdefault(
+            "next_action",
+            tool_next_action(
+                "scheduled_tasks_get",
+                {"name": str(payload["name"])},
+                label="View scheduled task",
+            ),
+        )
     return payload
 
 
 def _run_payload(task_name: str, result) -> dict[str, Any]:
+    output_path = Path(result.output_path)
+    open_url = file_open_url(output_path)
     return {
         "task_name": task_name,
         "task_type": result.task_type,
-        "output_path": str(Path(result.output_path)),
+        "output_path": str(output_path),
+        "open_url": open_url,
+        "open_action": open_url_next_action(open_url, label="Open report"),
         "content": result.content,
         "generated_at": result.generated_at.isoformat(),
         "success": True,
+        "next_action": open_url_next_action(open_url, label="Open report"),
     }
 
 

@@ -102,7 +102,13 @@ def test_preferences_round_trip_and_scope_view(monkeypatch, tmp_path):
         "calendar",
         "Primary",
     )
-    assert out == {
+    assert {
+        key: out[key]
+        for key in (
+            "scope",
+            "default",
+        )
+    } == {
         "scope": "calendar",
         "default": {
             "id": "cal-1",
@@ -112,6 +118,8 @@ def test_preferences_round_trip_and_scope_view(monkeypatch, tmp_path):
             "path": None,
         },
     }
+    assert out["next_action"]["tool"] == "apple_preferences_get"
+    assert out["next_action"]["arguments"] == {"scope": "calendar"}
 
     alias_out = prefs.apple_preferences_add_alias(
         "calendar",

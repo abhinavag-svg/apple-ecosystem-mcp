@@ -16,6 +16,15 @@ def _patch_run(monkeypatch, return_value):
     return mock
 
 
+def _without_action(row):
+    return {key: value for key, value in row.items() if key != "next_action"}
+
+
+def _assert_open_reminders_action(result):
+    assert result["next_action"]["type"] == "open_app"
+    assert result["next_action"]["app"] == "Reminders"
+
+
 def test_reminders_lists_returns_user_names(monkeypatch):
     _patch_run(monkeypatch, json.dumps(["Reminders", "Groceries", "Work"]))
     out = reminders.reminders_lists()
@@ -33,7 +42,7 @@ def test_reminders_lists_can_return_stable_ids(monkeypatch):
         ),
     )
     out = reminders.reminders_lists(include_metadata=True)
-    assert out == [
+    assert [_without_action(item) for item in out] == [
         {
             "id": "LIST-1",
             "name": "Reminders",
@@ -53,6 +62,11 @@ def test_reminders_lists_can_return_stable_ids(monkeypatch):
             "default_candidate": False,
         },
     ]
+    assert out[0]["next_action"]["tool"] == "reminders_list"
+    assert out[0]["next_action"]["arguments"] == {
+        "reminders_list_id": "LIST-1",
+        "list_name": "Reminders",
+    }
 
 
 def test_reminders_lists_preserves_name_compatibility_for_metadata_payload(monkeypatch):
@@ -151,7 +165,7 @@ def test_reminders_list_returns_canonical_shape(monkeypatch):
     )
     _patch_run(monkeypatch, payload)
     out = reminders.reminders_list(list_name="Groceries")
-    assert out == [
+    assert [_without_action(item) for item in out] == [
         {
             "id": "R-UUID-1",
             "title": "Buy milk",
@@ -165,6 +179,8 @@ def test_reminders_list_returns_canonical_shape(monkeypatch):
             "completed": False,
         }
     ]
+    assert out[0]["next_action"]["tool"] == "reminders_complete"
+    assert out[0]["next_action"]["arguments"] == {"reminder_id": "R-UUID-1"}
 
 
 def test_reminders_list_normalizes_missing_values(monkeypatch):
@@ -208,7 +224,9 @@ def test_reminders_create_accepts_due_notes_priority(monkeypatch):
         notes="Check the proposal",
         priority=5,
     )
-    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert result["id"] == "R-UUID-NEW"
+    assert result["success"] is True
+    _assert_open_reminders_action(result)
     call = run_mock.call_args
     assert call.args[1] == "Follow up"
     assert call.args[2] == "LIST-2"
@@ -231,7 +249,9 @@ def test_reminders_create_targets_stable_list_id(monkeypatch):
         reminders_list_id="LIST-2",
         list_name="Duplicate Name",
     )
-    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert result["id"] == "R-UUID-NEW"
+    assert result["success"] is True
+    _assert_open_reminders_action(result)
     call = run_mock.call_args
     assert call.args[1] == "Follow up"
     assert call.args[2] == "LIST-2"
@@ -252,7 +272,9 @@ def test_reminders_create_resolves_unique_list_name_to_stable_id(monkeypatch):
     )
     monkeypatch.setattr(reminders, "run_applescript", run_mock)
     result = reminders.reminders_create(title="Follow up", list_name="Work")
-    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert result["id"] == "R-UUID-NEW"
+    assert result["success"] is True
+    _assert_open_reminders_action(result)
     assert run_mock.call_args.args[2] == "LIST-2"
     assert run_mock.call_args.args[3] == "Work"
 
@@ -261,7 +283,11 @@ def test_reminders_create_list_uses_native(monkeypatch):
     native_mock = Mock(return_value={"id": "L1", "name": "Errands"})
     monkeypatch.setattr(reminders, "try_native", native_mock)
 
-    assert reminders.reminders_create_list("Errands") == {"id": "L1", "name": "Errands", "success": True}
+    result = reminders.reminders_create_list("Errands")
+    assert result["id"] == "L1"
+    assert result["name"] == "Errands"
+    assert result["success"] is True
+    assert result["next_action"]["tool"] == "reminders_list"
     assert native_mock.call_args.args[0:3] == ("reminders", "create-list", {"name": "Errands"})
 
 
@@ -275,7 +301,14 @@ def test_reminders_delete_list_preview_resolves_friendly_name(monkeypatch):
 
     result = reminders.reminders_delete_list(list_name="Errands")
 
-    assert result == {"preview": "Would delete reminder list: Errands", "confirmed": False}
+    assert result["preview"] == "Would delete reminder list: Errands"
+    assert result["confirmed"] is False
+    assert result["next_action"]["tool"] == "reminders_delete_list"
+    assert result["next_action"]["arguments"] == {
+        "reminders_list_id": "L1",
+        "list_name": "Errands",
+        "confirm": True,
+    }
 
 
 def test_reminders_search_uses_native(monkeypatch):
@@ -335,7 +368,10 @@ def test_reminders_update_builds_native_payload(monkeypatch):
     native_mock = Mock(return_value={"id": "R1"})
     monkeypatch.setattr(reminders, "try_native", native_mock)
 
-    assert reminders.reminders_update("R1", title="New", priority=99) == {"id": "R1", "success": True}
+    result = reminders.reminders_update("R1", title="New", priority=99)
+    assert result["id"] == "R1"
+    assert result["success"] is True
+    _assert_open_reminders_action(result)
     payload = native_mock.call_args.args[2]
     assert payload["title"] == "New"
     assert payload["priority"] == 9
@@ -373,7 +409,9 @@ def test_reminders_create_uses_preference_default_list(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(reminders, "run_applescript", run_mock)
     result = reminders.reminders_create(title="Follow up")
-    assert result == {"id": "R-UUID-NEW", "success": True}
+    assert result["id"] == "R-UUID-NEW"
+    assert result["success"] is True
+    _assert_open_reminders_action(result)
     assert run_mock.call_args.args[2] == "LIST-2"
     assert run_mock.call_args.args[3] == "Work"
 
@@ -426,21 +464,28 @@ def test_reminders_create_uses_argv_not_interpolation(monkeypatch):
 def test_reminders_complete_uses_canonical_id(monkeypatch):
     run_mock = _patch_run(monkeypatch, "R-UUID-3")
     out = reminders.reminders_complete("R-UUID-3")
-    assert out == {"id": "R-UUID-3", "success": True}
+    assert out["id"] == "R-UUID-3"
+    assert out["success"] is True
+    _assert_open_reminders_action(out)
     assert run_mock.call_args.args[1] == "R-UUID-3"
 
 
 def test_reminders_delete_uses_canonical_id(monkeypatch):
     run_mock = _patch_run(monkeypatch, "R-UUID-4")
     out = reminders.reminders_delete("R-UUID-4", confirm=True)
-    assert out == {"id": "R-UUID-4", "success": True}
+    assert out["id"] == "R-UUID-4"
+    assert out["success"] is True
+    _assert_open_reminders_action(out)
     assert run_mock.call_args.args[1] == "R-UUID-4"
 
 
 def test_reminders_delete_requires_confirmation(monkeypatch):
     run_mock = _patch_run(monkeypatch, "R-UUID-4")
     out = reminders.reminders_delete("R-UUID-4")
-    assert out == {"preview": "Would delete reminder: R-UUID-4", "confirmed": False}
+    assert out["preview"] == "Would delete reminder: R-UUID-4"
+    assert out["confirmed"] is False
+    assert out["next_action"]["tool"] == "reminders_delete"
+    assert out["next_action"]["arguments"] == {"reminder_id": "R-UUID-4", "confirm": True}
     run_mock.assert_not_called()
 
 

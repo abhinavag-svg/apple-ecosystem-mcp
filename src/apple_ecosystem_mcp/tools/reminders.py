@@ -11,6 +11,7 @@ from ..native_provider import NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
+from .actions import open_app_next_action, tool_next_action
 
 _PERMISSION_DENIED_SENTINEL = "__APPLE_ECOSYSTEM_MCP_REMINDERS_PERMISSION_DENIED__"
 _PERMISSION_DENIED_MESSAGE = (
@@ -85,6 +86,52 @@ def _nn(value):
     if isinstance(value, str) and (value == "" or value == "missing value"):
         return None
     return value
+
+
+def _reminders_open_app_action(*, label: str = "Open Reminders") -> dict[str, Any]:
+    return open_app_next_action("Reminders", label=label)
+
+
+def _reminder_list_args(item: dict[str, Any]) -> dict[str, Any] | None:
+    list_id = _nn(item.get("id")) or _nn(item.get("list_id"))
+    name = _nn(item.get("name")) or _nn(item.get("list_name"))
+    if not list_id and not name:
+        return None
+    args: dict[str, Any] = {}
+    if list_id:
+        args["reminders_list_id"] = str(list_id)
+    if name:
+        args["list_name"] = str(name)
+    return args
+
+
+def _add_reminder_list_action(item: dict[str, Any]) -> dict[str, Any]:
+    args = _reminder_list_args(item)
+    if args:
+        item.setdefault(
+            "next_action",
+            tool_next_action("reminders_list", args, label="List reminders"),
+        )
+    return item
+
+
+def _add_reminder_row_action(row: dict[str, Any]) -> dict[str, Any]:
+    reminder_id = _nn(row.get("id"))
+    if reminder_id and not bool(row.get("completed")):
+        row.setdefault(
+            "next_action",
+            tool_next_action(
+                "reminders_complete",
+                {"reminder_id": str(reminder_id)},
+                label="Complete reminder",
+            ),
+        )
+    return row
+
+
+def _with_reminders_app_action(payload: dict[str, Any], *, label: str = "Open Reminders") -> dict[str, Any]:
+    payload.setdefault("next_action", _reminders_open_app_action(label=label))
+    return payload
 
 
 _PERMISSION_HELPERS = r"""
@@ -461,7 +508,7 @@ def reminders_lists(include_metadata: bool = False) -> list[Any]:
                     "default_candidate": idx == 0,
                 }
             )
-        return normalized
+        return [_add_reminder_list_action(item) for item in normalized]
     return [item["name"] for item in lists]
 
 
@@ -547,18 +594,20 @@ def _normalize_reminder_rows(parsed: list[dict]) -> list[dict]:
         if not isinstance(row, dict):
             continue
         results.append(
-            {
-                "id": row.get("id"),
-                "title": _nn(row.get("title")),
-                "notes": _nn(row.get("notes")),
-                "due": _nn(row.get("due")),
-                "priority": int(row.get("priority") or 0),
-                "list_name": _nn(row.get("list_name")),
-                "list_id": _nn(row.get("list_id")),
-                "recurrence": _nn(row.get("recurrence")),
-                "tags": [str(t) for t in (row.get("tags") or []) if _nn(t)],
-                "completed": bool(row.get("completed")),
-            }
+            _add_reminder_row_action(
+                {
+                    "id": row.get("id"),
+                    "title": _nn(row.get("title")),
+                    "notes": _nn(row.get("notes")),
+                    "due": _nn(row.get("due")),
+                    "priority": int(row.get("priority") or 0),
+                    "list_name": _nn(row.get("list_name")),
+                    "list_id": _nn(row.get("list_id")),
+                    "recurrence": _nn(row.get("recurrence")),
+                    "tags": [str(t) for t in (row.get("tags") or []) if _nn(t)],
+                    "completed": bool(row.get("completed")),
+                }
+            )
         )
     return results
 
@@ -594,7 +643,7 @@ def reminders_create_list(name: str) -> dict:
         raise _native_required_error("reminders_create_list") from exc
     if not isinstance(data, dict) or not data.get("id"):
         raise RuntimeError("Unexpected create reminder list payload")
-    return {"id": data["id"], "name": data.get("name") or name, "success": True}
+    return _add_reminder_list_action({"id": data["id"], "name": data.get("name") or name, "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Rename Reminder List"))
@@ -623,7 +672,7 @@ def reminders_rename_list(
         raise _native_required_error("reminders_rename_list") from exc
     if not isinstance(data, dict) or not data.get("id"):
         raise RuntimeError("Unexpected rename reminder list payload")
-    return {"id": data["id"], "name": data.get("name") or new_name, "success": True}
+    return _add_reminder_list_action({"id": data["id"], "name": data.get("name") or new_name, "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Reminder List", destructiveHint=True))
@@ -639,7 +688,20 @@ def reminders_delete_list(
     resolved_id, resolved_name = resolved
     label = resolved_name or list_name or reminders_list_id
     if not confirm:
-        return {"preview": f"Would delete reminder list: {label}", "confirmed": False}
+        action_args: dict[str, Any] = {"confirm": True}
+        if resolved_id:
+            action_args["reminders_list_id"] = resolved_id
+        if resolved_name:
+            action_args["list_name"] = resolved_name
+        return {
+            "preview": f"Would delete reminder list: {label}",
+            "confirmed": False,
+            "next_action": tool_next_action(
+                "reminders_delete_list",
+                action_args,
+                label="Confirm delete reminder list",
+            ),
+        }
     try:
         data = try_native(
             "reminders",
@@ -651,7 +713,7 @@ def reminders_delete_list(
         raise _native_required_error("reminders_delete_list") from exc
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected delete reminder list payload")
-    return {"id": data.get("id") or resolved_id, "success": True}
+    return _with_reminders_app_action({"id": data.get("id") or resolved_id, "success": True})
 
 
 def _reminders_matching_due(kind: str, limit: int) -> list[dict]:
@@ -743,7 +805,7 @@ def reminders_update(
         raise _native_required_error("reminders_update") from exc
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected update reminder payload")
-    return {"id": data.get("id") or reminder_id, "success": True}
+    return _with_reminders_app_action({"id": data.get("id") or reminder_id, "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Rename Reminder"))
@@ -804,7 +866,7 @@ def reminders_create(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict) and data.get("id"):
-        return {"id": data["id"], "success": True}
+        return _with_reminders_app_action({"id": data["id"], "success": True})
 
     rid = _run_reminders_script(
         _CREATE_SCRIPT,
@@ -817,7 +879,7 @@ def reminders_create(
             str(priority),
         ),
     )
-    return {"id": rid, "success": True}
+    return _with_reminders_app_action({"id": rid, "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Complete Reminder", destructiveHint=True))
@@ -828,23 +890,31 @@ def reminders_complete(reminder_id: str) -> dict:
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict):
-        return {"id": data.get("id") or reminder_id, "success": True}
+        return _with_reminders_app_action({"id": data.get("id") or reminder_id, "success": True})
 
     rid = _run_reminders_script(_COMPLETE_SCRIPT, (reminder_id,))
-    return {"id": rid or reminder_id, "success": True}
+    return _with_reminders_app_action({"id": rid or reminder_id, "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Reminder", destructiveHint=True))
 def reminders_delete(reminder_id: str, confirm: bool = False) -> dict:
     """Delete a reminder. Requires confirm=True."""
     if not confirm:
-        return {"preview": f"Would delete reminder: {reminder_id}", "confirmed": False}
+        return {
+            "preview": f"Would delete reminder: {reminder_id}",
+            "confirmed": False,
+            "next_action": tool_next_action(
+                "reminders_delete",
+                {"reminder_id": reminder_id, "confirm": True},
+                label="Confirm delete reminder",
+            ),
+        }
     try:
         data = try_native("reminders", "delete", {"reminder_id": reminder_id}, timeout=15)
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict):
-        return {"id": data.get("id") or reminder_id, "success": True}
+        return _with_reminders_app_action({"id": data.get("id") or reminder_id, "success": True})
 
     rid = _run_reminders_script(_DELETE_SCRIPT, (reminder_id,))
-    return {"id": rid or reminder_id, "success": True}
+    return _with_reminders_app_action({"id": rid or reminder_id, "success": True})

@@ -11,6 +11,7 @@ from . import contacts as contacts_tools
 from . import icloud as icloud_tools
 from . import mail as mail_tools
 from . import reminders as reminders_tools
+from .actions import tool_next_action
 from ..server import mcp
 
 _KNOWN_SCOPES = {
@@ -109,6 +110,14 @@ def _scope_preferences_view(store: PreferencesStore, scope: str) -> dict[str, An
     }
 
 
+def _preferences_get_action(scope: str) -> dict[str, Any]:
+    return tool_next_action(
+        "apple_preferences_get",
+        {"scope": scope},
+        label="View preferences",
+    )
+
+
 @mcp.tool(annotations=ToolAnnotations(title="Apple Inventory", readOnlyHint=True))
 def apple_inventory(scope: str | None = None) -> list[dict[str, Any]] | dict[str, Any]:
     """List discoverable Apple containers across supported scopes."""
@@ -141,7 +150,7 @@ def apple_preferences_set_default(
     try:
         target = _target_from_parts(id=id, name=name, kind=kind, account_name=account_name, path=path)
         preference = store.set_default(scope, target)
-        return {"scope": scope, "default": preference.to_dict()}
+        return {"scope": scope, "default": preference.to_dict(), "next_action": _preferences_get_action(scope)}
     except PreferencesError as exc:
         return _preferences_error(scope, exc)
     except Exception as exc:
@@ -163,7 +172,7 @@ def apple_preferences_add_alias(
     try:
         target = _target_from_parts(id=id, name=name, kind=kind, account_name=account_name, path=path)
         record = store.add_alias(scope, alias, target)
-        return {"scope": scope, "alias": record.to_dict()}
+        return {"scope": scope, "alias": record.to_dict(), "next_action": _preferences_get_action(scope)}
     except PreferencesError as exc:
         return _preferences_error(scope, exc)
     except Exception as exc:
@@ -176,7 +185,7 @@ def apple_preferences_remove_alias(scope: str, alias: str) -> dict[str, Any]:
     store = _store()
     try:
         removed = store.remove_alias(scope, alias)
-        return {"scope": scope, "alias": alias, "removed": removed}
+        return {"scope": scope, "alias": alias, "removed": removed, "next_action": _preferences_get_action(scope)}
     except PreferencesError as exc:
         return _preferences_error(scope, exc)
     except Exception as exc:

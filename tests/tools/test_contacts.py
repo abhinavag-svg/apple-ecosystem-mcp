@@ -14,6 +14,25 @@ def _patch_run(monkeypatch, return_value):
     return mock
 
 
+def _without_actions(row):
+    return {
+        key: value
+        for key, value in row.items()
+        if key not in {"next_action", "open_url", "open_action", "email_url"}
+    }
+
+
+def _assert_contact_get_action(row, contact_id):
+    assert row["next_action"]["tool"] == "contacts_get"
+    assert row["next_action"]["arguments"] == {"contact_id": contact_id}
+
+
+def _assert_email_action(row, email):
+    assert row["open_url"] == f"mailto:{email}"
+    assert row["open_action"]["type"] == "open_url"
+    assert row["open_action"]["label"] == "Email contact"
+
+
 def test_contacts_search_returns_canonical_shape(monkeypatch):
     payload = json.dumps(
         [
@@ -32,7 +51,7 @@ def test_contacts_search_returns_canonical_shape(monkeypatch):
     )
     run_mock = _patch_run(monkeypatch, payload)
     results = contacts.contacts_search("Ada")
-    assert results == [
+    assert [_without_actions(row) for row in results] == [
         {
             "id": "ABC-123",
             "first": "Ada",
@@ -45,6 +64,8 @@ def test_contacts_search_returns_canonical_shape(monkeypatch):
             "groups": ["Mathematicians"],
         }
     ]
+    _assert_contact_get_action(results[0], "ABC-123")
+    _assert_email_action(results[0], "ada@example.com")
     # argv[0] is the script, args[1] is query, args[2] is limit (as string), args[3] is group.
     call = run_mock.call_args
     assert call.args[1] == "Ada"
@@ -168,6 +189,9 @@ def test_contacts_get_returns_canonical_record(monkeypatch):
     assert record["addresses"] == ["10 Downing St, London"]
     assert record["birthday"] == "1815-12-10T00:00:00"
     assert record["notes"] == "Hello"
+    assert record["next_action"]["type"] == "open_url"
+    assert record["next_action"]["label"] == "Email contact"
+    _assert_email_action(record, "a@example.com")
     # contact_id routed through argv
     assert run_mock.call_args.args[1] == "UUID-1"
 
@@ -228,14 +252,21 @@ def test_contacts_delete_requires_confirmation(monkeypatch):
 
     result = contacts.contacts_delete("C1")
 
-    assert result == {"preview": "Would delete contact: Ada Lovelace", "confirmed": False}
+    assert result["preview"] == "Would delete contact: Ada Lovelace"
+    assert result["confirmed"] is False
+    assert result["next_action"]["tool"] == "contacts_delete"
+    assert result["next_action"]["arguments"] == {"contact_id": "C1", "confirm": True}
 
 
 def test_contacts_delete_confirmed_uses_native(monkeypatch):
     native_mock = Mock(return_value={"id": "C1"})
     monkeypatch.setattr(contacts, "try_native", native_mock)
 
-    assert contacts.contacts_delete("C1", confirm=True) == {"id": "C1", "success": True}
+    result = contacts.contacts_delete("C1", confirm=True)
+    assert result["id"] == "C1"
+    assert result["success"] is True
+    assert result["next_action"]["type"] == "open_app"
+    assert result["next_action"]["app"] == "Contacts"
     assert native_mock.call_args.args[0:3] == ("contacts", "delete", {"contact_id": "C1"})
 
 
@@ -291,7 +322,11 @@ def test_contacts_create_returns_id_and_success(monkeypatch):
         phone="+1-555-0200",
         company="Navy",
     )
-    assert out == {"id": "NEW-UUID", "success": True}
+    assert out["id"] == "NEW-UUID"
+    assert out["success"] is True
+    assert out["email"] == "grace@example.com"
+    _assert_contact_get_action(out, "NEW-UUID")
+    _assert_email_action(out, "grace@example.com")
     call = run_mock.call_args
     assert call.args[1] == "Grace"
     assert call.args[2] == "Hopper"
@@ -314,7 +349,9 @@ def test_contacts_create_optional_fields_become_empty_strings(monkeypatch):
 def test_contacts_update_sends_sentinel_for_unchanged_fields(monkeypatch):
     run_mock = _patch_run(monkeypatch, "UUID-4")
     out = contacts.contacts_update("UUID-4", first="NewFirst")
-    assert out == {"id": "UUID-4", "success": True}
+    assert out["id"] == "UUID-4"
+    assert out["success"] is True
+    _assert_contact_get_action(out, "UUID-4")
     call = run_mock.call_args
     assert call.args[1] == "UUID-4"
     assert call.args[2] == "NewFirst"
@@ -350,7 +387,7 @@ def test_contacts_list_groups_filters_empty_and_missing(monkeypatch):
 def test_contacts_list_groups_can_return_metadata(monkeypatch):
     _patch_run(monkeypatch, json.dumps(["Friends", "Work"]))
     out = contacts.contacts_list_groups(include_metadata=True)
-    assert out == [
+    assert [_without_actions(row) for row in out] == [
         {
             "id": "Friends",
             "name": "Friends",
@@ -370,6 +407,8 @@ def test_contacts_list_groups_can_return_metadata(monkeypatch):
             "default_candidate": False,
         },
     ]
+    assert out[0]["next_action"]["tool"] == "contacts_search"
+    assert out[0]["next_action"]["arguments"] == {"query": "", "group": "Friends"}
 
 
 def test_contacts_permission_failure_surfaces_as_runtime_error(monkeypatch):

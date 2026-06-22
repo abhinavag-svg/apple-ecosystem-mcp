@@ -109,6 +109,8 @@ def test_notes_search_uses_argv_and_returns_summaries(monkeypatch):
     result = notes.notes_search('quote " safe', account="iCloud", folder="Notes", limit=500)
     assert result[0]["id"] == "N1"
     assert result[0]["preview"] == "Hello\nworld"
+    assert result[0]["next_action"]["tool"] == "notes_read"
+    assert result[0]["next_action"]["arguments"] == {"note_id": "N1"}
     assert "body" not in result[0]
     assert run_mock.call_args.args[1:5] == ("iCloud", "Notes", 'quote " safe', "200")
     assert 'quote " safe' not in run_mock.call_args.args[0]
@@ -211,7 +213,11 @@ def test_notes_create_returns_success(monkeypatch):
     payload = json.dumps({"id": "N2", "title": "New", "body": "Body"})
     run_mock = _patch_run(monkeypatch, payload)
     result = notes.notes_create(folder="Notes", title="New", body="Body", account="iCloud")
-    assert result == {"id": "N2", "title": "New", "success": True}
+    assert result["id"] == "N2"
+    assert result["title"] == "New"
+    assert result["success"] is True
+    assert result["next_action"]["tool"] == "notes_read"
+    assert result["next_action"]["arguments"] == {"note_id": "N2"}
     assert run_mock.call_args.args[1:5] == ("Notes", "New", "Body", "iCloud")
 
 
@@ -223,7 +229,10 @@ def test_notes_append_requires_target():
 def test_notes_delete_requires_confirmation(monkeypatch):
     _patch_run(monkeypatch, json.dumps({"id": "N1", "title": "Project", "body": ""}))
     result = notes.notes_delete(note_id="N1")
-    assert result == {"preview": "Would delete note: Project", "confirmed": False}
+    assert result["preview"] == "Would delete note: Project"
+    assert result["confirmed"] is False
+    assert result["next_action"]["tool"] == "notes_delete"
+    assert result["next_action"]["arguments"] == {"note_id": "N1", "confirm": True}
 
 
 def test_notes_delete_confirmed(monkeypatch):

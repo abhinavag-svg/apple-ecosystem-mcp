@@ -11,6 +11,7 @@ from ..native_provider import NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
+from .actions import open_app_next_action, open_url_next_action, tool_next_action
 
 # Result-size limits (see Implementation Plan §Result-Size Policy).
 LIST_EVENTS_DEFAULT_LIMIT = 50
@@ -566,6 +567,57 @@ def _with_attendees_alias(record: dict) -> dict:
     return record
 
 
+def _calendar_event_id(record: dict[str, Any]) -> str | None:
+    value = _nn(record.get("uid")) or _nn(record.get("id"))
+    return str(value) if value is not None else None
+
+
+def _add_calendar_event_actions(record: dict[str, Any], *, detail: bool = False) -> dict[str, Any]:
+    event_id = _calendar_event_id(record)
+    url = _nn(record.get("url"))
+    if isinstance(url, str) and url:
+        record.setdefault("open_url", url)
+        record.setdefault("open_action", open_url_next_action(url, label="Open event URL"))
+    if detail:
+        if isinstance(url, str) and url:
+            record.setdefault("next_action", open_url_next_action(url, label="Open event URL"))
+    elif event_id:
+        record.setdefault(
+            "next_action",
+            tool_next_action(
+                "calendar_get_event",
+                {"event_id": event_id},
+                label="View event details",
+            ),
+        )
+    return record
+
+
+def _add_calendar_event_actions_to_rows(rows: list[Any]) -> list[Any]:
+    result: list[Any] = []
+    for row in rows:
+        if isinstance(row, dict):
+            result.append(_add_calendar_event_actions(dict(row)))
+        else:
+            result.append(row)
+    return result
+
+
+def _calendar_open_app_action(*, label: str = "Open Calendar") -> dict[str, Any]:
+    return open_app_next_action("Calendar", label=label)
+
+
+def _event_success_payload(event_id: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {"uid": event_id, "success": True}
+    if event_id:
+        payload["next_action"] = tool_next_action(
+            "calendar_get_event",
+            {"event_id": str(event_id)},
+            label="View event details",
+        )
+    return payload
+
+
 @cache_inventory("calendars", ttl=30)
 def _calendars_cached() -> list[dict]:
     try:
@@ -702,13 +754,15 @@ def calendar_list_events(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, list):
-        return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+        rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+        return _add_calendar_event_actions_to_rows(rows)
 
     raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "", timeout=35)
     data = _parse_json(raw)
     if not isinstance(data, list):
         raise RuntimeError("Unexpected events payload")
-    return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+    rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+    return _add_calendar_event_actions_to_rows(rows)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Get Event", readOnlyHint=True))
@@ -719,7 +773,7 @@ def calendar_get_event(event_id: str) -> dict:
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict):
-        return _with_attendees_alias(data)
+        return _add_calendar_event_actions(_with_attendees_alias(data), detail=True)
 
     raw = run_applescript(_GET_EVENT_SCRIPT, event_id, timeout=25)
     data = _parse_json(raw)
@@ -727,7 +781,7 @@ def calendar_get_event(event_id: str) -> dict:
         raise RuntimeError("Event not found")
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected event payload")
-    return _with_attendees_alias(data)
+    return _add_calendar_event_actions(_with_attendees_alias(data), detail=True)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Create Event"))
@@ -779,7 +833,7 @@ def calendar_create_event(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict) and data.get("uid"):
-        return {"uid": data["uid"], "success": True}
+        return _event_success_payload(data["uid"])
     if url or all_day:
         raise RuntimeError("calendar_create_event with url or all_day requires the bundled native helper")
 
@@ -797,7 +851,7 @@ def calendar_create_event(
     data = _parse_json(raw)
     if not isinstance(data, dict) or "uid" not in data:
         raise RuntimeError("Unexpected create payload")
-    return {"uid": data["uid"], "success": True}
+    return _event_success_payload(data["uid"])
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Update Event"))
@@ -870,7 +924,7 @@ def calendar_update_event(
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict) and data.get("uid"):
-        return {"uid": data["uid"], "success": True}
+        return _event_success_payload(data["uid"])
     if url or clear_url or all_day is not None:
         raise RuntimeError("calendar_update_event with url or all_day requires the bundled native helper")
 
@@ -890,7 +944,7 @@ def calendar_update_event(
     data = _parse_json(raw)
     if not isinstance(data, dict) or "uid" not in data:
         raise RuntimeError("Unexpected update payload")
-    return {"uid": data["uid"], "success": True}
+    return _event_success_payload(data["uid"])
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Event", destructiveHint=True))
@@ -910,6 +964,11 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
         return {
             "preview": f"Would delete: {label}",
             "confirmed": False,
+            "next_action": tool_next_action(
+                "calendar_delete_event",
+                {"event_id": event_id, "confirm": True},
+                label="Confirm delete event",
+            ),
         }
 
     try:
@@ -917,10 +976,12 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     except NativeProviderUnavailable:
         data = None
     if isinstance(data, dict):
-        return {"uid": data.get("uid") or event_id, "success": True}
+        payload = {"uid": data.get("uid") or event_id, "success": True}
+        payload["next_action"] = _calendar_open_app_action()
+        return payload
 
     run_applescript(_DELETE_EVENT_SCRIPT, event_id, timeout=35)
-    return {"uid": event_id, "success": True}
+    return {"uid": event_id, "success": True, "next_action": _calendar_open_app_action()}
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Find Free Time", readOnlyHint=True))
@@ -1067,7 +1128,7 @@ def calendar_search(
     except NativeProviderUnavailable:
         events = calendar_list_events(start_norm, end_norm, calendar_uid=calendar_uid, limit=LIST_EVENTS_MAX_LIMIT)
         needle = query.casefold()
-        return [
+        return _add_calendar_event_actions_to_rows([
             ev
             for ev in events
             if isinstance(ev, dict)
@@ -1076,10 +1137,11 @@ def calendar_search(
                 or needle in str(ev.get("location") or "").casefold()
                 or needle in str(ev.get("notes") or "").casefold()
             )
-        ][:capped]
+        ][:capped])
     if not isinstance(data, list):
         raise RuntimeError("Unexpected calendar search payload")
-    return [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+    rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+    return _add_calendar_event_actions_to_rows(rows)
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Create All-Day Event"))

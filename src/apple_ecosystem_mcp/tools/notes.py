@@ -14,6 +14,7 @@ from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript
 from ..server import mcp
+from .actions import tool_next_action
 
 _LIST_LIMIT_DEFAULT = 50
 _LIST_LIMIT_MAX = 200
@@ -80,6 +81,27 @@ def _normalize_note_summary(row: dict) -> dict:
     note["preview"] = text[:240]
     note.pop("body", None)
     note.pop("text", None)
+    return note
+
+
+def _note_read_args(note: dict[str, Any]) -> dict[str, Any] | None:
+    note_id = _nn(note.get("id"))
+    if note_id:
+        return {"note_id": str(note_id)}
+    title = _nn(note.get("title"))
+    if not title:
+        return None
+    args: dict[str, Any] = {"title": str(title)}
+    account = _nn(note.get("account"))
+    if account:
+        args["account"] = str(account)
+    return args
+
+
+def _add_note_next_action(note: dict[str, Any], *, label: str = "Read note") -> dict[str, Any]:
+    args = _note_read_args(note)
+    if args:
+        note.setdefault("next_action", tool_next_action("notes_read", args, label=label))
     return note
 
 
@@ -630,7 +652,7 @@ def notes_list(
     rows = _parse_json(
         run_applescript(_LIST_SCRIPT, account or "", folder or "", "", str(_limit(limit)), "false", timeout=30)
     )
-    return [_normalize_note_summary(row) for row in rows if isinstance(row, dict)]
+    return [_add_note_next_action(_normalize_note_summary(row)) for row in rows if isinstance(row, dict)]
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Search Notes", readOnlyHint=True))
@@ -644,7 +666,7 @@ def notes_search(
     rows = _parse_json(
         run_applescript(_LIST_SCRIPT, account or "", folder or "", query, str(_limit(limit)), "false", timeout=30)
     )
-    return [_normalize_note_summary(row) for row in rows if isinstance(row, dict)]
+    return [_add_note_next_action(_normalize_note_summary(row)) for row in rows if isinstance(row, dict)]
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Read Note", readOnlyHint=True))
@@ -682,7 +704,7 @@ def notes_create(
     if not isinstance(row, dict):
         raise RuntimeError("Unexpected create note payload")
     note = _normalize_note(row)
-    return {"id": note.get("id"), "title": note.get("title"), "success": True}
+    return _add_note_next_action({"id": note.get("id"), "title": note.get("title"), "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Append Note"))
@@ -699,7 +721,7 @@ def notes_append(
     if not isinstance(row, dict):
         raise RuntimeError("Unexpected append note payload")
     note = _normalize_note(row)
-    return {"id": note.get("id"), "title": note.get("title"), "success": True}
+    return _add_note_next_action({"id": note.get("id"), "title": note.get("title"), "success": True})
 
 
 @mcp.tool(annotations=ToolAnnotations(title="Delete Note", destructiveHint=True))
@@ -718,7 +740,22 @@ def notes_delete(
             label = preview.get("title") or note_id or title
         except RuntimeError:
             label = note_id or title
-        return {"preview": f"Would delete note: {label}", "confirmed": False}
+        action_args: dict[str, Any] = {"confirm": True}
+        if title is not None:
+            action_args["title"] = title
+        if note_id is not None:
+            action_args["note_id"] = note_id
+        if account is not None:
+            action_args["account"] = account
+        return {
+            "preview": f"Would delete note: {label}",
+            "confirmed": False,
+            "next_action": tool_next_action(
+                "notes_delete",
+                action_args,
+                label="Confirm delete note",
+            ),
+        }
     row = _parse_json(run_applescript(_DELETE_SCRIPT, note_id or "", title or "", account or "", timeout=30))
     if not isinstance(row, dict):
         raise RuntimeError("Unexpected delete note payload")

@@ -179,7 +179,9 @@ def test_mail_search_delegates_to_service(monkeypatch):
         filters={"account_name": "iCloud"},
     )
 
-    assert result == [{"id": "<msg@test>"}]
+    assert result[0]["id"] == "<msg@test>"
+    assert result[0]["open_url"] == "message://%3Cmsg%40test%3E"
+    assert result[0]["next_action"]["tool"] == "mail_get_thread"
     kwargs = search_mock.call_args.kwargs
     assert kwargs["mailbox_id"] == "mb-7"
     assert kwargs["limit"] == 10
@@ -188,6 +190,27 @@ def test_mail_search_delegates_to_service(monkeypatch):
     assert kwargs["search_fields"] == ["subject", "sender"]
     assert kwargs["filters"] == {"account_name": "iCloud"}
     assert kwargs["mailbox_inventory_fn"] is mail.mail_list_mailboxes
+
+
+def test_mail_search_coerces_stringified_llm_arguments(monkeypatch):
+    search_mock = Mock(return_value=[{"id": "<msg@test>"}])
+    monkeypatch.setattr(mail, "service_search_mail", search_mock)
+
+    result = mail.mail_search(
+        "linkedin",
+        limit="15",
+        since="2026-06-19T08:00:00",
+        search_fields='["from"]',
+        filters='{"account_name": "iCloud"}',
+    )
+
+    assert result[0]["id"] == "<msg@test>"
+    assert result[0]["open_action"]["type"] == "open_url"
+    kwargs = search_mock.call_args.kwargs
+    assert kwargs["limit"] == 15
+    assert kwargs["since"] == "2026-06-19T08:00:00"
+    assert kwargs["search_fields"] == ["from"]
+    assert kwargs["filters"] == {"account_name": "iCloud"}
 
 
 def test_mail_recent_delegates_to_service(monkeypatch):
@@ -201,13 +224,32 @@ def test_mail_recent_delegates_to_service(monkeypatch):
         filters={"unread": True, "account_name": "iCloud"},
     )
 
-    assert result == [{"id": "<recent@test>"}]
+    assert result[0]["id"] == "<recent@test>"
+    assert result[0]["open_url"] == "message://%3Crecent%40test%3E"
+    assert result[0]["next_action"]["tool"] == "mail_get_thread"
     kwargs = recent_mock.call_args.kwargs
     assert kwargs["limit"] == 5
     assert kwargs["since"] == "2026-06-10T22:00:00"
     assert kwargs["before"] == "2026-06-11T12:00:00"
     assert kwargs["filters"] == {"unread": True, "account_name": "iCloud"}
     assert kwargs["mailbox_inventory_fn"] is mail.mail_list_mailboxes
+
+
+def test_mail_recent_coerces_stringified_filters(monkeypatch):
+    recent_mock = Mock(return_value=[{"id": "<recent@test>"}])
+    monkeypatch.setattr(mail, "service_recent_mail", recent_mock)
+
+    result = mail.mail_recent(
+        limit="10",
+        since="2026-06-20T00:00:00",
+        filters='{"unread": true}',
+    )
+
+    assert result[0]["id"] == "<recent@test>"
+    assert result[0]["open_action"]["label"] == "Open in Mail"
+    kwargs = recent_mock.call_args.kwargs
+    assert kwargs["limit"] == 10
+    assert kwargs["filters"] == {"unread": True}
 
 
 def test_mail_diagnostics_delegates_to_store_inspection(monkeypatch):
@@ -218,6 +260,15 @@ def test_mail_diagnostics_delegates_to_store_inspection(monkeypatch):
 
     assert result == {"ok": True, "provider": "mail_store"}
     inspect_mock.assert_called_once_with()
+
+
+def test_mail_diagnostics_adds_next_action_when_unavailable(monkeypatch):
+    inspect_mock = Mock(return_value={"ok": False, "error": "mail_store_permission_denied"})
+    monkeypatch.setattr(mail, "inspect_mail_store", inspect_mock)
+
+    result = mail.mail_diagnostics()
+
+    assert result["next_action"]["tool"] == "mail_access_setup"
 
 
 def test_mail_access_setup_reports_modes_without_opening_settings(monkeypatch):
@@ -232,6 +283,8 @@ def test_mail_access_setup_reports_modes_without_opening_settings(monkeypatch):
     assert result["recommended_default"] == "applescript_first_auto"
     assert [mode["mode"] for mode in result["modes"]] == ["auto", "applescript", "local"]
     assert result["settings_path"] == "System Settings > Privacy & Security > Full Disk Access"
+    assert result["open_url"] == "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+    assert result["next_action"]["type"] == "open_url"
     open_mock.assert_not_called()
 
 
@@ -269,6 +322,7 @@ def test_refresh_mail_snapshot_delegates_to_store_refresh(monkeypatch):
     assert result["ok"] is True
     assert result["provider"] == "mail_store_snapshot"
     assert result["snapshot_db_path"] == "/tmp/snapshot/Envelope Index"
+    assert result["next_action"]["tool"] == "mail_recent"
     refresh_mock.assert_called_once_with(ttl_seconds=900)
 
 
@@ -283,6 +337,8 @@ def test_refresh_mail_snapshot_returns_structured_permission_error(monkeypatch):
     assert result["error"] == "mail_store_permission_denied"
     assert "refresh-snapshot" in result["next_step"]
     assert "Full Disk Access" in result["settings_path"]
+    assert result["open_url"] == "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"
+    assert result["next_action"]["type"] == "terminal_command"
 
 
 def test_mail_search_script_contract_smoke():
@@ -292,7 +348,9 @@ def test_mail_search_script_contract_smoke():
     assert "if scanLim > 500 then set scanLim to 500" in mail_service._SEARCH_SCRIPT
     assert "if recentMode or unreadStr is not \"\"" in mail_service._SEARCH_SCRIPT
     assert "else if searchSubject and my containsCI(subj, qry) then" in mail_service._SEARCH_SCRIPT
-    assert "if recentMode then exit repeat" in mail_service._SEARCH_SCRIPT
+    assert 'mbName is "INBOX"' in mail_service._SEARCH_SCRIPT
+    assert "repeat with idx_ from 1 to scanLim" in mail_service._SEARCH_SCRIPT
+    assert "exit repeat" in mail_service._SEARCH_SCRIPT
 
 
 def test_mail_move_accepts_rfc_id(monkeypatch):
@@ -527,6 +585,127 @@ def test_mail_get_thread_degrades_to_store_metadata_on_body_timeout(monkeypatch)
     assert result["attachments"] == []
 
 
+def test_mail_get_thread_uses_store_body_fallback_on_applescript_failure(monkeypatch):
+    scoped = {
+        "id": "<m@x>",
+        "internal_id": "77",
+        "mail_object_id": "177",
+        "subject": "s",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+        "attachments": [],
+        "provider": "mail_store",
+    }
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=scoped))
+    monkeypatch.setattr(mail, "run_applescript", Mock(side_effect=RuntimeError("AppleScript failed (exit 1)")))
+    monkeypatch.setattr(
+        mail,
+        "read_mail_store_message_body",
+        Mock(
+            return_value={
+                "body": "fallback body",
+                "body_content_type": "text/plain",
+                "body_source": "mail_store_emlx",
+            }
+        ),
+    )
+
+    result = mail.mail_get_thread("<m@x>", include_body=True)
+
+    assert result["body"] == "fallback body"
+    assert result["body_available"] is True
+    assert result["body_source"] == "mail_store_emlx"
+    assert result["body_content_type"] == "text/plain"
+    assert result["body_fallback_reason"] == "AppleScript failed (exit 1)"
+    assert "body_unavailable" not in result
+
+
+def test_mail_get_thread_uses_message_id_body_fallback_without_store_scope(monkeypatch):
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
+    monkeypatch.setattr(mail, "run_applescript", Mock(side_effect=RuntimeError("AppleScript failed (exit 1)")))
+    monkeypatch.setattr(
+        mail,
+        "read_mail_store_message_body_by_message_id",
+        Mock(
+            return_value={
+                "id": "<m@x>",
+                "message_id": "<m@x>",
+                "subject": "fallback subject",
+                "sender": "Sender <s@x>",
+                "date": "2026-06-22T10:00:00+00:00",
+                "body": "fallback by id",
+                "body_content_type": "text/plain",
+                "body_source": "mail_store_emlx",
+            }
+        ),
+    )
+
+    result = mail.mail_get_thread("m@x", include_body=True)
+
+    assert result["id"] == "m@x"
+    assert result["message_id"] == "m@x"
+    assert result["subject"] == "fallback subject"
+    assert result["sender"] == "Sender <s@x>"
+    assert result["body"] == "fallback by id"
+    assert result["body_available"] is True
+    assert result["body_source"] == "mail_store_emlx"
+    assert result["body_fallback_reason"] == "AppleScript failed (exit 1)"
+    assert "body_unavailable" not in result
+
+
+def test_mail_get_thread_uses_store_body_fallback_when_applescript_body_empty(monkeypatch):
+    scoped = {
+        "id": "<m@x>",
+        "internal_id": "77",
+        "mail_object_id": "177",
+        "subject": "s",
+        "sender": "a@b",
+        "date": "2026-04-01T00:00:00",
+        "mailbox_id": "imap://icloud/INBOX",
+        "mailbox_path": "INBOX",
+        "account_name": "iCloud",
+        "attachments": [],
+        "provider": "mail_store",
+    }
+    payload = dict(scoped)
+    payload["body"] = ""
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=scoped))
+    monkeypatch.setattr(mail, "run_applescript", Mock(return_value=json.dumps(payload)))
+    monkeypatch.setattr(
+        mail,
+        "read_mail_store_message_body",
+        Mock(return_value={"body": "<p>fallback html</p>", "body_content_type": "text/html"}),
+    )
+
+    result = mail.mail_get_thread("<m@x>", include_body=True)
+
+    assert result["body"] == "fallback html"
+    assert result["body_available"] is True
+    assert result["body_source"] == "mail_store_emlx"
+    assert result["body_content_type"] == "text/html"
+    assert result["body_fallback_reason"] == "AppleScript returned an empty body"
+
+
+def test_mail_get_thread_degrades_without_store_scope_on_applescript_failure(monkeypatch):
+    monkeypatch.setattr(mail, "_thread_scope_from_store", Mock(return_value=None))
+    monkeypatch.setattr(mail, "run_applescript", Mock(side_effect=RuntimeError("AppleScript failed (exit 1)")))
+    monkeypatch.setattr(mail, "read_mail_store_message_body_by_message_id", Mock(return_value=None))
+
+    result = mail.mail_get_thread("m@example.com", include_body=True)
+
+    assert result["id"] == "m@example.com"
+    assert result["message_id"] == "m@example.com"
+    assert result["body"] == ""
+    assert result["body_available"] is False
+    assert result["body_unavailable"] == "AppleScript failed (exit 1)"
+    assert result["attachments"] == []
+    assert result["open_url"] == "message://%3Cm%40example.com%3E"
+    assert result["next_action"]["type"] == "open_url"
+
+
 def test_mail_get_thread_degrades_when_applescript_returns_wrong_account(monkeypatch):
     scoped = {
         "id": "<m@x>",
@@ -587,6 +766,8 @@ def test_mail_send_dry_run_returns_preview(monkeypatch):
     assert result["preview"]["cc"] == ["e@f.com"]
     assert result["preview"]["subject"] == "hi"
     assert result["preview"]["from_account"] == "iCloud"
+    assert result["next_action"]["tool"] == "mail_send"
+    assert result["next_action"]["arguments"]["dry_run"] is False
     run_mock.assert_not_called()
 
 
@@ -604,6 +785,7 @@ def test_mail_send_actual_send_invokes_applescript(monkeypatch):
     )
     assert result["sent"] is True
     assert result["message_id"] == "<m@x>"
+    assert result["next_action"]["type"] == "open_app"
     run_mock.assert_called_once()
 
     args = run_mock.call_args.args
@@ -661,8 +843,18 @@ def test_mail_create_draft_invokes_applescript(monkeypatch):
         body="b",
     )
     assert result["draft_created"] is True
+    assert result["draft_visible"] is True
+    assert result["open_mail"]["app"] == "Mail"
+    assert result["next_step"] == "Review and send the visible draft in Mail."
     args = run_mock.call_args.args
     assert args[1:] == ("s", "b", "", "0", "2", "0", "a@b.com", "c@d.com")
+
+
+def test_mail_create_draft_script_makes_drafts_visible():
+    assert "visible:(not sendFlag)" in mail._SEND_SCRIPT
+    assert "activate" in mail._SEND_SCRIPT
+    assert '\\"draft_visible\\":true' in mail._SEND_SCRIPT
+    assert '\\"open_mail\\"' in mail._SEND_SCRIPT
 
 
 def test_mail_create_draft_requires_recipient():
@@ -695,6 +887,8 @@ def test_mail_open_message_dry_run_resolves_store_message(monkeypatch):
     assert result["dry_run"] is True
     assert result["message_id"] == "<m@x>"
     assert result["url"] == "message://%3Cm%40x%3E"
+    assert result["open_url"] == "message://%3Cm%40x%3E"
+    assert result["next_action"]["type"] == "open_url"
     assert result["account_name"] == "iCloud"
     run_mock.assert_not_called()
 
@@ -708,6 +902,21 @@ def test_mail_open_message_opens_message_url(monkeypatch):
 
     assert result["opened"] is True
     assert result["url"] == "message://%3Cm%40x%3E"
+    assert result["open_url"] == "message://%3Cm%40x%3E"
+    assert result["next_action"]["type"] == "open_app"
+    run_mock.assert_called_once_with(["open", "message://%3Cm%40x%3E"], check=True, timeout=5)
+
+
+def test_mail_open_message_wraps_bare_rfc_message_id_for_mail_url(monkeypatch):
+    monkeypatch.setattr(mail, "get_mail_store_message", Mock(return_value=None))
+    run_mock = Mock()
+    monkeypatch.setattr(mail.subprocess, "run", run_mock)
+
+    result = mail.mail_open_message("m@x")
+
+    assert result["opened"] is True
+    assert result["message_id"] == "m@x"
+    assert result["url"] == "message://%3Cm%40x%3E"
     run_mock.assert_called_once_with(["open", "message://%3Cm%40x%3E"], check=True, timeout=5)
 
 
@@ -718,6 +927,7 @@ def test_mail_open_message_returns_unresolved_for_non_rfc_id(monkeypatch):
 
     assert result["error"] == "message_id_unresolved"
     assert result["recoverable"] is True
+    assert result["next_action"]["tool"] == "mail_search"
 
 
 def test_mail_open_message_returns_structured_open_failure(monkeypatch):
@@ -759,6 +969,8 @@ def test_mail_move_message_targets_by_id(monkeypatch):
     assert result["success"] is True
     assert result["message_id"] == "<m@x>"
     assert result["mailbox_id"] == "mb-archive"
+    assert result["open_url"] == "message://%3Cm%40x%3E"
+    assert result["next_action"]["tool"] == "mail_get_thread"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>", "mb-archive")
 
@@ -852,6 +1064,7 @@ def test_mail_flag_message_sets_flag(monkeypatch):
     result = mail.mail_flag_message("<m@x>", True)
     assert result["flagged"] is True
     assert result["message_id"] == "<m@x>"
+    assert result["open_action"]["type"] == "open_url"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>", "1")
 
@@ -878,6 +1091,7 @@ def test_mail_delete_by_canonical_id(monkeypatch):
     result = mail.mail_delete("<m@x>", confirm=True)
     assert result["success"] is True
     assert result["message_id"] == "<m@x>"
+    assert result["next_action"]["type"] == "open_app"
     args = run_mock.call_args.args
     assert args[1:] == ("<m@x>",)
 
@@ -887,7 +1101,10 @@ def test_mail_delete_requires_confirmation(monkeypatch):
     monkeypatch.setattr(mail, "run_applescript", run_mock)
 
     result = mail.mail_delete("<m@x>")
-    assert result == {"preview": "Would delete message: <m@x>", "confirmed": False}
+    assert result["preview"] == "Would delete message: <m@x>"
+    assert result["confirmed"] is False
+    assert result["next_action"]["tool"] == "mail_delete"
+    assert result["next_action"]["arguments"] == {"message_id": "<m@x>", "confirm": True}
     run_mock.assert_not_called()
 
 

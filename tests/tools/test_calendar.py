@@ -40,6 +40,16 @@ def _local_naive(value: str) -> str:
     )
 
 
+def _assert_event_next_action(result, event_id: str):
+    assert result["next_action"]["tool"] == "calendar_get_event"
+    assert result["next_action"]["arguments"] == {"event_id": event_id}
+
+
+def _assert_open_calendar_action(result):
+    assert result["next_action"]["type"] == "open_app"
+    assert result["next_action"]["app"] == "Calendar"
+
+
 # ---------------------------------------------------------------------------
 # Annotations
 # ---------------------------------------------------------------------------
@@ -245,6 +255,31 @@ def test_get_event_returns_record(monkeypatch):
     assert run_mock.call_args.args[1] == "ev-1"
 
 
+def test_get_event_exposes_url_open_action(monkeypatch):
+    payload = json.dumps(
+        {
+            "uid": "ev-url",
+            "title": "Video call",
+            "start": "2026-04-22T10:00:00",
+            "end": "2026-04-22T11:00:00",
+            "location": None,
+            "notes": None,
+            "url": "https://example.com/join",
+            "all_day": False,
+            "calendar_uid": "uid-1",
+            "calendar_name": "Work",
+            "attendees": [],
+        }
+    )
+    _mk_run(monkeypatch, payload)
+
+    out = cal.calendar_get_event("ev-url")
+
+    assert out["open_url"] == "https://example.com/join"
+    assert out["open_action"]["type"] == "open_url"
+    assert out["next_action"]["type"] == "open_url"
+
+
 def test_get_event_not_found(monkeypatch):
     _mk_run(monkeypatch, "null")
     with pytest.raises(RuntimeError, match="Event not found"):
@@ -274,7 +309,9 @@ def test_create_event_defaults_uid_to_empty_and_sends_argv(monkeypatch):
     assert args[5] == ""
     assert args[6] == ""
     assert args[7] == ""
-    assert out == {"uid": "ev-new", "success": True}
+    assert out["uid"] == "ev-new"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-new")
 
 
 def test_create_event_rejects_non_writable_calendar(monkeypatch):
@@ -320,7 +357,9 @@ def test_create_event_resolves_friendly_calendar_name(monkeypatch):
         "2026-04-22T10:00:00",
         calendar_uid="Work",
     )
-    assert out == {"uid": "ev-new", "success": True}
+    assert out["uid"] == "ev-new"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-new")
     assert run_mock.call_args.args[1] == "cal-work"
 
 
@@ -359,7 +398,9 @@ def test_create_event_uses_preference_default_calendar(monkeypatch, tmp_path):
         "2026-04-22T09:00:00",
         "2026-04-22T10:00:00",
     )
-    assert out == {"uid": "ev-new", "success": True}
+    assert out["uid"] == "ev-new"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-new")
     assert run_mock.call_args.args[1] == "cal-home"
 
 
@@ -461,7 +502,9 @@ def test_update_event_passes_only_supplied_fields(monkeypatch):
         monkeypatch, [get_payload, calendars_payload, update_payload]
     )
     out = cal.calendar_update_event("ev-1", title="Renamed")
-    assert out == {"uid": "ev-1", "success": True}
+    assert out["uid"] == "ev-1"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-1")
     # Third call = the update; confirm title was passed and other fields blank.
     update_args = run_mock.call_args_list[2].args
     assert update_args[1] == "ev-1"
@@ -491,7 +534,9 @@ def test_update_event_supports_clear_location_and_notes(monkeypatch):
     update_payload = json.dumps({"uid": "ev-1"})
     run_mock = _mk_run(monkeypatch, [get_payload, calendars_payload, update_payload])
     out = cal.calendar_update_event("ev-1", clear_location=True, clear_notes=True)
-    assert out == {"uid": "ev-1", "success": True}
+    assert out["uid"] == "ev-1"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-1")
     update_args = run_mock.call_args_list[2].args
     assert update_args[5] == ""
     assert update_args[6] == ""
@@ -574,7 +619,9 @@ def test_delete_event_default_confirm_false_is_preview(monkeypatch):
 def test_delete_event_confirm_true_performs_delete(monkeypatch):
     run_mock = _mk_run(monkeypatch, ["ok"])
     out = cal.calendar_delete_event("ev-1", confirm=True)
-    assert out == {"uid": "ev-1", "success": True}
+    assert out["uid"] == "ev-1"
+    assert out["success"] is True
+    _assert_open_calendar_action(out)
     # Only one call — the delete script.
     assert run_mock.call_count == 1
     args = run_mock.call_args.args
@@ -770,7 +817,9 @@ def test_create_event_sends_url_and_all_day_to_native(monkeypatch):
         all_day=True,
     )
 
-    assert out == {"uid": "ev-native", "success": True}
+    assert out["uid"] == "ev-native"
+    assert out["success"] is True
+    _assert_event_next_action(out, "ev-native")
     payload = native_mock.call_args.args[2]
     assert payload["url"] == "https://example.com"
     assert payload["all_day"] is True

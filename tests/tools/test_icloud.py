@@ -274,6 +274,10 @@ class TestIcloudStat:
             assert result["is_dir"] is False
             assert "modified" in result
             assert "created" in result
+            assert result["open_url"].startswith("file://")
+            assert result["open_action"]["type"] == "open_url"
+            assert result["next_action"]["tool"] == "icloud_read"
+            assert result["next_action"]["arguments"] == {"path": "/file.txt"}
 
     def test_icloud_stat_directory_metadata(self, tmp_path):
         """Stat returns directory metadata."""
@@ -285,6 +289,9 @@ class TestIcloudStat:
             assert result["name"] == "folder"
             assert result["is_dir"] is True
             assert result["is_file"] is False
+            assert result["open_url"].startswith("file://")
+            assert result["next_action"]["tool"] == "icloud_list"
+            assert result["next_action"]["arguments"] == {"path": "/folder"}
 
     def test_icloud_stat_nonexistent_path(self, tmp_path):
         """Stat on nonexistent path raises RuntimeError."""
