@@ -1,72 +1,151 @@
 # Apple Ecosystem MCP
 
-Apple Ecosystem MCP is a local macOS MCP server for Claude Desktop and Claude Code. It exposes Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive through a mix of native macOS frameworks, AppleScript, and local filesystem access.
+Apple Ecosystem MCP lets Claude work across the Apple apps you already use on your Mac: Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive.
 
-The project ships primarily as a Claude Desktop `.mcpb` bundle.
+It is built for everyday personal productivity: triage recent email, draft replies, plan around your calendar, find notes, check reminders, and assemble cross-app context without manually copying data between apps.
 
-## What It Covers
+Everything runs locally through Claude Desktop or Claude Code. There is no hosted backend, no credential store, and macOS permissions remain in your control.
 
-- Mail
-- Calendar
-- Contacts
-- Reminders
-- Notes
-- iCloud Drive
-- Friendly-name preferences and stable target resolution
-- Local scheduled tasks built on top of the same tools
+## What You Can Ask
 
-## Example Prompts
+Apple Ecosystem MCP is most useful when Claude needs to coordinate across apps.
 
-These are the kinds of things the connector is built for:
+Examples:
 
-- `Draft an email to Jane J saying we need to plan a meetup night next week in between the kids' schedule. Check her contact details, look at next week's calendar openings, and help me suggest a couple of realistic evenings.`
-- `Find the latest thread with our school, check my calendar for this week, and draft a reply proposing two pickup-call times that do not conflict with anything.`
-- `Look up David Chen in my contacts, find our recent email history, check when I'm free next Thursday, and draft a meeting follow-up with a few time options.`
-- `Review tomorrow's calendar, my overdue reminders, and any unread important mail, then give me a short morning game plan.`
-- `Find my Tuscany Itinerary note, pull the related calendar events and any travel emails, and help me assemble a clean trip summary.`
+- `Triage my inbox from the last 10 hours and summarize anything urgent.`
+- `Find emails from LinkedIn yesterday and open the most relevant one.`
+- `Check tomorrow's calendar and overdue reminders, then give me a morning plan.`
+- `Find my Tuscany Itinerary note and summarize the travel plan.`
+- `Draft a reply to Jane using her contact info and my calendar availability.`
+- `Find the latest school email, check this week's calendar openings, and draft a pickup-call reply.`
 
-These are deliberately cross-app. The value is not just one tool at a time, but Claude being able to reason across Mail, Calendar, Contacts, Reminders, Notes, and files together.
+## Capabilities
 
-## Scheduled Workflow Examples
+### Mail
 
-Scheduled tasks are better for recurring read-heavy workflows than one-off commands.
+- Search recent, unread, sender, email-address, subject, and time-window queries.
+- Read message metadata and body text for practical summaries.
+- Open messages in Mail.
+- Draft, send, move, flag, and delete messages with safer write paths.
+- Use an AppleScript-first path with local Inbox metadata and message-file fallbacks for reliability.
 
-- `Create a scheduled task that runs every weekday at 7:00 AM and prepares a daily triage summary from my calendar, reminders, and important unread mail.`
-- `Create a scheduled task for Sunday evening that gives me a weekly planning digest with next week's events, overdue reminders, and open follow-ups.`
-- `Create a scheduled task for 8:30 PM that generates a tomorrow preview with calendar events, due reminders, and anything I should prepare tonight.`
-- `List my scheduled tasks and show me which ones are enabled.`
+### Calendar, Contacts, And Reminders
 
-## Runtime Architecture
+- Read and update calendar events.
+- Search and inspect contacts.
+- Create and manage reminders and reminder lists.
+- Use a bundled native macOS helper for fast, stable local access.
 
-- Calendar, Contacts, and Reminders use a bundled native macOS helper.
-- Mail uses AppleScript, with an optional local Mail metadata provider for supported date-window and mailbox metadata queries.
-- Notes uses AppleScript for canonical reads, with a read-only Apple Notes store fallback for recovery from large-note failures.
-- iCloud Drive uses local filesystem access.
+### Notes
 
-More detail lives in [docs/architecture.md](./docs/architecture.md).
+- List, search, and read Apple Notes.
+- Prefer reliable plain-text reads for large rich notes.
+- Fall back to the local Notes store when AppleScript body extraction is too expensive.
 
-## Documentation
+### iCloud Drive
 
-If you want the full story of the project, start here:
+- Browse and read local iCloud Drive files.
+- Write or update files when explicitly requested.
 
-- [docs/README.md](./docs/README.md)
-- [docs/product-story.md](./docs/product-story.md)
-- [docs/development-history.md](./docs/development-history.md)
-- [docs/architecture.md](./docs/architecture.md)
-- [docs/roadmap.md](./docs/roadmap.md)
+### Scheduled Tasks
+
+- Create local recurring report workflows such as:
+  - daily triage
+  - tomorrow preview
+  - overdue reminders review
+  - weekly planning digest
+
+## Install In Claude Desktop
+
+1. Download `apple-ecosystem-mcp.mcpb` from the latest GitHub release.
+2. Double-click the `.mcpb` file.
+3. Install it in Claude Desktop.
+4. Restart Claude Desktop if needed.
+5. Grant macOS permissions when prompted.
+
+After install, ask Claude:
+
+```text
+Call apple_inventory.
+```
 
 ## Requirements
 
 - macOS 13 or newer
 - Claude Desktop or Claude Code
-- For local development: `uv` and Xcode command line tools / `swiftc`
+- Apple apps configured locally on the Mac
 
-## Install In Claude Desktop
+For local development:
 
-1. Download `apple-ecosystem-mcp.mcpb` from [GitHub Releases](https://github.com/abhinavag-svg/apple-ecosystem-mcp/releases).
-2. Double-click the `.mcpb` file and install it in Claude Desktop.
-3. Restart Claude Desktop if needed.
-4. Grant macOS permissions when prompted.
+- `uv`
+- Xcode command line tools / `swiftc`
+
+## Permissions
+
+macOS controls access through system permissions. Apple Ecosystem MCP uses those permissions rather than storing credentials.
+
+| Capability | Typical macOS permission |
+|---|---|
+| Mail tools | Automation -> Mail |
+| Notes tools | Automation -> Notes |
+| Calendar tools | Calendars |
+| Contacts tools | Contacts |
+| Reminders tools | Reminders |
+| iCloud Drive tools | Full Disk Access may be required |
+| Local Mail metadata fallback | Full Disk Access may be required |
+
+If a permission is missing, the affected tool should return a scoped error instead of taking down the server.
+
+## Privacy
+
+- Runs locally on your Mac.
+- Communicates with Claude over local MCP stdio.
+- Does not run a hosted service.
+- Does not store Apple account credentials.
+- Does not sync your Apple data to a separate backend.
+- Data appears in Claude only when you ask Claude to use it.
+
+See [PRIVACY.md](./PRIVACY.md) for the full policy.
+
+## Troubleshooting
+
+### A Tool Says Permission Is Missing
+
+Open System Settings -> Privacy & Security and grant the relevant permission. Restart Claude Desktop after granting new permissions.
+
+### Mail Search Or Reading Looks Stale
+
+Mail uses an AppleScript-first path with local Inbox fallbacks for supported read workflows. In Claude, call:
+
+```text
+mail_access_setup
+```
+
+For local diagnostics:
+
+```bash
+uv run apple-ecosystem-mcp mail diagnostics --json
+```
+
+### Force A Provider During Testing
+
+Use AppleScript for Calendar, Contacts, and Reminders:
+
+```bash
+APPLE_ECOSYSTEM_MCP_PROVIDER=applescript
+```
+
+Force Mail to AppleScript:
+
+```bash
+APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=applescript
+```
+
+Force Mail to the local metadata provider:
+
+```bash
+APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=local
+```
 
 ## Local Development
 
@@ -91,97 +170,14 @@ To run directly from a checkout in Claude Desktop:
 }
 ```
 
-## Permissions
+Development docs live under [`docs/`](./docs/). They are useful for contributors, but they are not required to use the Claude Desktop bundle.
 
-The server stays local, but macOS still gates access through TCC permissions.
+## Support
 
-| Capability | Typical permission |
-|---|---|
-| Mail tools | Automation -> Mail |
-| Notes tools | Automation -> Notes |
-| Calendar tools | Calendars |
-| Contacts tools | Contacts |
-| Reminders tools | Reminders |
-| iCloud Drive tools | Full Disk Access may be required |
-| Local Mail metadata provider | Full Disk Access may be required |
+For support, bugs, and privacy questions:
 
-If a permission is missing, the affected tool should fail with a scoped error rather than taking down the whole server.
-
-## Tool Families
-
-The server currently exposes 73 tools across:
-
-- Mail
-- Calendar
-- Contacts
-- Reminders
-- Notes
-- iCloud Drive
-- Inventory / preferences / target resolution
-- Scheduled tasks
-
-To inspect the exact tool set after install, ask Claude to list available tools or call `apple_inventory`, `scheduled_tasks_list`, or one of the app-specific list tools.
-
-## Scheduled Tasks
-
-Scheduled tasks are local automations layered on top of the same MCP tools. They are intended for report-style and read-heavy workflows first, not background destructive actions.
-
-Examples:
-
-- daily triage
-- tomorrow preview
-- overdue reminders review
-- weekly planning digest
-
-## Privacy
-
-- The server runs locally on your Mac.
-- It does not host a network service.
-- It does not store credentials.
-- Data only leaves your Mac when you explicitly use it in Claude.
-
-See [PRIVACY.md](./PRIVACY.md) for the full policy.
-
-## Troubleshooting
-
-Common fixes:
-
-1. Re-grant macOS permissions in System Settings.
-2. Restart Claude Desktop after granting new permissions.
-3. Rebuild the bundle with `make build` if you are testing local changes.
-4. Force legacy provider behavior for Calendar, Contacts, and Reminders with:
-
-```bash
-APPLE_ECOSYSTEM_MCP_PROVIDER=applescript
-```
-
-5. Mail defaults to AppleScript-first auto mode. To inspect Mail access options or open Full Disk Access settings:
-
-```bash
-uv run apple-ecosystem-mcp mail diagnostics --json
-```
-
-In Claude, use `mail_access_setup`.
-
-6. Force Mail to stay on AppleScript:
-
-```bash
-APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=applescript
-```
-
-7. Force Mail to use the local metadata provider when testing supported queries:
-
-```bash
-APPLE_ECOSYSTEM_MCP_MAIL_PROVIDER=local
-```
-
-## Contributor Notes
-
-For contributors and maintainers:
-
-- Architecture: [docs/architecture.md](./docs/architecture.md)
-- Prompt-routing reference: [docs/claude-prompt-dictionary.md](./docs/claude-prompt-dictionary.md)
-- Broader project docs: [docs/README.md](./docs/README.md)
+- GitHub: https://github.com/abhinavag-svg/apple-ecosystem-mcp/issues
+- Email: apple_anthropic_mcp@icloud.com
 
 ## License
 

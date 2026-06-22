@@ -89,4 +89,4 @@ This project does not directly transmit your Apple data to a third-party service
 For privacy questions or concerns:
 
 - GitHub: https://github.com/abhinavag-svg/apple-ecosystem-mcp
-- Email: abhinavag@icloud.com
+- Email: apple_anthropic_mcp@icloud.com

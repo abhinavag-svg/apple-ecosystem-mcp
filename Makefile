@@ -31,6 +31,13 @@ build:
 	find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
 	cd mcpb/contents && zip -X -q -r ../apple-ecosystem-mcp.mcpb .
 	cd mcpb/contents && zip -X -q -r ../apple-ecosystem-mcp.dxt .
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx manifest.json
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx README.md
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx PRIVACY.md
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx LICENSE
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx server/runner.py
+	@unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -qx bin/apple-ecosystem-helper
+	@! unzip -Z1 mcpb/apple-ecosystem-mcp.mcpb | grep -E '(^|/)\.DS_Store$$|(^|/)docs/|(^|/)tests/|(^|/)\.claude/|(^|/)\.git/|(^|/)mcpb/|(^|/)dist/'
 	@ls -lh mcpb/apple-ecosystem-mcp.mcpb
 	@ls -lh mcpb/apple-ecosystem-mcp.dxt
 

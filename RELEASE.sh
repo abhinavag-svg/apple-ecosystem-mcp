@@ -12,6 +12,25 @@ if [ -z "$VERSION" ]; then
     exit 1
 fi
 
+verify_bundle_contents() {
+    local bundle="$1"
+    local listing
+    listing=$(unzip -Z1 "$bundle")
+
+    for required in manifest.json README.md PRIVACY.md LICENSE pyproject.toml uv.lock server/runner.py bin/apple-ecosystem-helper; do
+        if ! echo "$listing" | grep -qx "$required"; then
+            echo "❌ ERROR: Required bundle file missing: $required"
+            exit 1
+        fi
+    done
+
+    if echo "$listing" | grep -E '(^|/)\.DS_Store$|(^|/)docs/|(^|/)tests/|(^|/)\.claude/|(^|/)\.git/|(^|/)mcpb/|(^|/)dist/' >/dev/null; then
+        echo "❌ ERROR: Bundle contains forbidden local/docs/test artifacts"
+        echo "$listing" | grep -E '(^|/)\.DS_Store$|(^|/)docs/|(^|/)tests/|(^|/)\.claude/|(^|/)\.git/|(^|/)mcpb/|(^|/)dist/'
+        exit 1
+    fi
+}
+
 echo "🚀 Starting release for v$VERSION..."
 echo ""
 
@@ -36,12 +55,13 @@ echo ""
 echo "📝 Updating version to $VERSION..."
 sed -i '' "s/version = \"[0-9.]*\"/version = \"$VERSION\"/" pyproject.toml
 sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" manifest.json
+UV_CACHE_DIR=.uv-cache uv lock
 echo "✅ Version bumped to $VERSION"
 echo ""
 
 # Commit version bump
 echo "💾 Committing version bump..."
-git add pyproject.toml manifest.json
+git add pyproject.toml manifest.json uv.lock
 git commit -m "chore: release v$VERSION"
 echo "✅ Version bump committed"
 echo ""
@@ -56,11 +76,13 @@ mkdir -p mcpb/contents/bin
 cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock mcpb/contents/
 cp -r server src mcpb/contents/
 cp native/build/apple-ecosystem-helper mcpb/contents/bin/
+find mcpb/contents -name .DS_Store -delete
 find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
 cd mcpb/contents
 zip -q -r "../apple-ecosystem-mcp.mcpb" .
 cd ../..
 ls -lh "mcpb/apple-ecosystem-mcp.mcpb"
+verify_bundle_contents "mcpb/apple-ecosystem-mcp.mcpb"
 echo "✅ MCPB bundle created"
 echo ""
 
@@ -81,7 +103,16 @@ echo ""
 echo "🚀 Creating GitHub release..."
 gh release create "v$VERSION" \
     --title "v$VERSION — Apple Ecosystem MCP Release" \
-    --notes "Install the attached apple-ecosystem-mcp.mcpb in Claude Desktop. See README.md for setup and permissions."
+    --notes "Apple Ecosystem MCP v$VERSION is the first stable release for local Claude workflows across Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive.
+
+Highlights:
+- Local-first Apple productivity tools for Claude Desktop and Claude Code.
+- Reliable Mail triage, search, open, draft, and read workflows with Inbox-focused fallbacks.
+- Native Calendar, Contacts, and Reminders access through the bundled macOS helper.
+- Notes reads tuned for large rich notes.
+- Minimal MCPB package with README, privacy policy, license, source, runner, and native helper.
+
+Install the attached apple-ecosystem-mcp.mcpb in Claude Desktop. See README.md for setup, permissions, troubleshooting, and support."
 echo ""
 
 # Upload assets

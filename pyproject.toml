@@ -24,7 +24,7 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
 ]
 authors = [
-  { name = "Abhinav Agrawal", email = "abhinavag@icloud.com" }
+  { name = "Abhinav Agrawal", email = "apple_anthropic_mcp@icloud.com" }
 ]
 
 [project.urls]

@@ -4,6 +4,7 @@ build/
 native/build/
 mcpb/
 mcpb/*.mcpb
+*.mcpb
 *.dxt
 *.egg-info/
 
@@ -89,6 +90,7 @@ Desktop.ini
 
 # Claude Code local config & debug
 .claude/debug.log
+.claude/settings.local.json
 .claude/worktrees/
 
 # Local project config
