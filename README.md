@@ -5,6 +5,7 @@ Apple Ecosystem MCP lets Claude work across the Apple apps you already use on yo
 It is built for everyday personal productivity: triage recent email, draft replies, plan around your calendar, find notes, check reminders, and assemble cross-app context without manually copying data between apps.
 
 Everything runs locally through Claude Desktop or Claude Code. There is no hosted backend, no credential store, and macOS permissions remain in your control.
+
 <img width="760" height="1180" alt="triage_screenshot" src="https://github.com/user-attachments/assets/adc64b6b-7a9a-4aae-8a71-985a3a175355" />
 
 ## What You Can Ask
