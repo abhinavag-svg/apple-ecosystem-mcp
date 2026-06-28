@@ -9,6 +9,24 @@ Updated automatically at end of each session. Tracks progress across days.
 
 ## Session Log
 
+### Session 7 (2026-06-28, MCPB installability, Node compatibility, and permission UX release)
+- **What changed:**
+  - Reworked the primary MCPB to run through a Node launcher for current Claude Desktop compatibility while keeping the existing Python tool engine and bundled native helper.
+  - Added separate Node and future UV manifests/build targets, stricter MCPB validation, package metadata, and GitHub-profile author metadata for Anthropic submission readiness.
+  - Embedded macOS privacy usage descriptions in the native helper and added a local menu-bar companion app skeleton for service status and permission workflows.
+  - Hardened Contacts and Reminders fallback behavior when native framework access is denied or unavailable.
+  - Fixed a live Contacts lookup regression where the AppleScript fallback failed to compile after native Contacts permission denial.
+  - Pulled the latest GitHub README screenshot commits before release preparation.
+- **Verification:**
+  - Focused packaging tests: `tests/test_packaging.py`.
+  - Focused Contacts/Reminders/native tests during triage.
+  - Release build validation via `scripts/validate_mcpb.py --mode node`.
+- **Blockers:**
+  - Track C native companion UX is still a skeleton/control-plane start, not a polished bundled app install experience.
+- **Next steps:**
+  - Install the v1.1.0 MCPB in Claude Desktop and smoke-test `hello_apple`, `apple_inventory`, Contacts, Reminders, Calendar, Mail, and Notes.
+  - Decide whether to fully rewrite the server in Node.js if Anthropic interprets "built with Node.js" as implementation language rather than MCPB runtime.
+
 ### Session 6 (2026-06-10, mail metadata provider and Notes reliability release)
 - **What changed:**
   - Added a local Mail metadata provider backed by Apple Mail's read-only Envelope Index for metadata/date-window searches, with provider selection and degraded-mode fallback behavior.

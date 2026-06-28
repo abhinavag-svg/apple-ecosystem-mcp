@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 ICLOUD_ROOT = Path.home() / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
@@ -87,4 +88,4 @@ def check_permissions() -> None:
         pass
 
     for name, settings_path in missing:
-        print(f"⚠ Missing: {name} → {settings_path} → {_GRANT_TEXT}")
+        print(f"⚠ Missing: {name} → {settings_path} → {_GRANT_TEXT}", file=sys.stderr)

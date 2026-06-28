@@ -1,0 +1,17 @@
+{
+  "name": "apple-ecosystem-mcp-node-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Node.js MCPB launcher for Apple Ecosystem MCP",
+  "author": {
+    "name": "Abhinav Agrawal",
+    "email": "apple_anthropic_mcp@icloud.com",
+    "url": "https://github.com/abhinavag-svg"
+  },
+  "type": "module",
+  "main": "node/server/node-launcher.mjs",
+  "scripts": {
+    "start": "node node/server/node-launcher.mjs"
+  },
+  "license": "MIT"
+}

@@ -65,6 +65,12 @@ Examples:
 4. Restart Claude Desktop if needed.
 5. Grant macOS permissions when prompted.
 
+The `.mcpb` is the primary install path. Current Claude Desktop builds validate
+local bundles as Node/Python/Binary extensions, so this local bundle uses a
+Node.js launcher around the existing Python tool engine. A future `uv` runtime
+bundle can be built separately once your Claude Desktop build supports MCPB
+`server.type = "uv"`.
+
 After install, ask Claude:
 
 ```text
@@ -81,6 +87,7 @@ For local development:
 
 - `uv`
 - Xcode command line tools / `swiftc`
+- Node.js 18 or newer only if you are building the optional Node-compatible MCPB
 
 ## Permissions
 
@@ -158,6 +165,29 @@ make install
 make test
 make build
 ```
+
+`make build` creates the primary Node-launcher bundle at
+`mcpb/apple-ecosystem-mcp.mcpb`.
+
+To build the same Node.js launcher bundle under the explicit compatibility
+target:
+
+```bash
+make build-node-mcpb
+```
+
+The Node bundle is intentionally separate from the primary install bundle. It is
+a thin Node launcher around the existing Python tool engine, not a rewrite of the
+Apple tools.
+
+To build the future MCPB `uv` runtime bundle described in the public MCPB docs:
+
+```bash
+make build-uv-mcpb
+```
+
+Use that artifact only after confirming your Claude Desktop build accepts
+`server.type = "uv"`.
 
 To run directly from a checkout in Claude Desktop:
 

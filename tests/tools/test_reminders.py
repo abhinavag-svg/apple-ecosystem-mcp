@@ -126,6 +126,16 @@ def test_reminders_list_filters_by_completed_flag(monkeypatch):
     assert run_mock.call_args.args[3] == "true"
 
 
+def test_reminders_list_falls_back_when_native_helper_errors(monkeypatch):
+    def fail_native(*args, **kwargs):
+        raise reminders.NativeProviderError("native_backend_error", "Mach error 4099", recoverable=True)
+
+    monkeypatch.setattr(reminders, "try_native", fail_native)
+    run_mock = _patch_run(monkeypatch, "[]")
+    assert reminders.reminders_list(list_name="Work") == []
+    assert run_mock.called
+
+
 def test_reminders_list_scan_limit_scales_with_result_limit(monkeypatch):
     run_mock = _patch_run(monkeypatch, "[]")
     reminders.reminders_list(list_name="Work", limit=3)

@@ -6,13 +6,14 @@ from urllib.parse import quote
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript
-from ..native_provider import NativeProviderUnavailable, try_native
+from ..native_provider import NativeProviderError, NativeProviderUnavailable, try_native
 from ..server import mcp
 from .actions import open_app_next_action, open_url_next_action, tool_next_action
 
 _SEARCH_LIMIT_DEFAULT = 10
 _SEARCH_LIMIT_MAX = 50
 _NOTES_MAX_CHARS = 2000
+_CONTACTS_SETTINGS = "System Settings > Privacy & Security > Contacts"
 
 
 def _nn(value):
@@ -77,6 +78,23 @@ def _add_contact_actions(record: dict, *, detail: bool = False) -> dict:
 
 def _contacts_open_app_action(*, label: str = "Open Contacts") -> dict:
     return open_app_next_action("Contacts", label=label)
+
+
+def _is_contacts_permission_error(exc: NativeProviderError) -> bool:
+    if exc.code in {"permission_denied", "permission_not_determined"}:
+        return True
+    return exc.code == "native_backend_error" and "access denied" in str(exc).lower()
+
+
+def _contacts_permission_payload(exc: NativeProviderError) -> dict:
+    return {
+        "error": exc.code,
+        "message": str(exc),
+        "recoverable": exc.recoverable,
+        "settings_path": _CONTACTS_SETTINGS,
+        "next_step": "Grant Contacts access to Apple Ecosystem Helper, Claude, or the Apple Ecosystem companion app.",
+        "next_action": _contacts_open_app_action(),
+    }
 
 
 def _contact_success_payload(contact_id: str | None, *, email: str | None = None) -> dict:
@@ -187,33 +205,6 @@ on run argv
     end tell
     return my jsonify(output)
 end run
-
-on contactMatches(p, q)
-    set pfirst to ""
-    try
-        set pfirst to first name of p as string
-    end try
-    set plast to ""
-    try
-        set plast to last name of p as string
-    end try
-    set porg to ""
-    try
-        set porg to organization of p as string
-    end try
-    if my containsCI(pfirst, q) or my containsCI(plast, q) or my containsCI((pfirst & " " & plast), q) or my containsCI(porg, q) then return true
-    try
-        repeat with e in emails of p
-            if my containsCI(value of e, q) then return true
-        end repeat
-    end try
-    try
-        repeat with ph in phones of p
-            if my containsCI(value of ph, q) then return true
-        end repeat
-    end try
-    return false
-end contactMatches
 
 on containsCI(hay, needle)
     try
@@ -654,6 +645,10 @@ def contacts_search(query: str, limit: int = _SEARCH_LIMIT_DEFAULT, group: str |
         )
     except NativeProviderUnavailable:
         parsed = None
+    except NativeProviderError as exc:
+        if not _is_contacts_permission_error(exc):
+            raise
+        parsed = None
     if not isinstance(parsed, list):
         parsed = None
     if parsed is None:
@@ -725,6 +720,10 @@ def contacts_get(contact_id: str) -> dict:
         data = try_native("contacts", "get", {"contact_id": contact_id}, timeout=15)
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _is_contacts_permission_error(exc):
+            raise
+        data = None
     if not isinstance(data, dict):
         raw = run_applescript(_GET_SCRIPT, contact_id)
         try:
@@ -787,6 +786,10 @@ def contacts_create(
         )
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _is_contacts_permission_error(exc):
+            raise
+        data = None
     if isinstance(data, dict) and data.get("id"):
         return _contact_success_payload(str(data["id"]), email=email)
 
@@ -827,6 +830,10 @@ def contacts_update(
         data = try_native("contacts", "update", payload, timeout=15)
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _is_contacts_permission_error(exc):
+            raise
+        data = None
     if isinstance(data, dict) and data.get("id"):
         return _contact_success_payload(str(data["id"]), email=email)
 
@@ -864,6 +871,10 @@ def contacts_delete(contact_id: str, confirm: bool = False) -> dict:
         data = try_native("contacts", "delete", {"contact_id": contact_id}, timeout=15)
     except NativeProviderUnavailable as exc:
         raise RuntimeError("contacts_delete requires the bundled native helper") from exc
+    except NativeProviderError as exc:
+        if _is_contacts_permission_error(exc):
+            return _contacts_permission_payload(exc)
+        raise
     if not isinstance(data, dict):
         raise RuntimeError("Unexpected contacts delete payload")
     return {"id": data.get("id") or contact_id, "success": True, "next_action": _contacts_open_app_action()}
@@ -875,6 +886,10 @@ def _birthday_rows(mode: str, days: int = 30) -> list[dict]:
         parsed = try_native("contacts", "birthdays", {"mode": mode, "days": capped_days}, timeout=20)
     except NativeProviderUnavailable as exc:
         raise RuntimeError(f"contacts_birthdays_{mode} requires the bundled native helper") from exc
+    except NativeProviderError as exc:
+        if _is_contacts_permission_error(exc):
+            return [_contacts_permission_payload(exc)]
+        raise
     results: list[dict] = []
     for row in parsed if isinstance(parsed, list) else []:
         if not isinstance(row, dict):
@@ -924,6 +939,11 @@ def contacts_list_groups(include_metadata: bool = False) -> list[str] | list[dic
         parsed = try_native("contacts", "list-groups", timeout=15)
     except NativeProviderUnavailable:
         parsed = None
+    except NativeProviderError as exc:
+        if _is_contacts_permission_error(exc):
+            parsed = None
+        else:
+            raise
     if parsed is None:
         raw = run_applescript(_GROUPS_SCRIPT)
         try:

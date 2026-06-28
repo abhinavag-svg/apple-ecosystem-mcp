@@ -7,7 +7,7 @@ from typing import Any
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
-from ..native_provider import NativeProviderUnavailable, try_native
+from ..native_provider import NativeProviderError, NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -78,6 +78,12 @@ def _normalize_due_iso(due: str) -> str:
 
 def _native_required_error(tool: str) -> RuntimeError:
     return RuntimeError(f"{tool} requires the bundled native helper")
+
+
+def _native_should_fallback(exc: NativeProviderError) -> bool:
+    if exc.code in {"permission_denied", "permission_not_determined", "native_backend_error"}:
+        return exc.recoverable
+    return False
 
 
 def _nn(value):
@@ -475,6 +481,10 @@ def reminders_lists(include_metadata: bool = False) -> list[Any]:
         parsed = try_native("reminders", "list-lists", timeout=15)
     except NativeProviderUnavailable:
         parsed = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        parsed = None
     if not isinstance(parsed, list):
         raw = _run_reminders_script(_LISTS_SCRIPT)
         try:
@@ -547,6 +557,10 @@ def reminders_list(
         )
     except NativeProviderUnavailable:
         parsed = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        parsed = None
     if not isinstance(parsed, list):
         parsed = None
     if parsed is None:
@@ -610,6 +624,28 @@ def _normalize_reminder_rows(parsed: list[dict]) -> list[dict]:
             )
         )
     return results
+
+
+def _reminders_search_applescript(query: str, *, limit: int, include_completed: bool) -> list[dict]:
+    capped = max(1, min(int(limit), 100))
+    query_lower = query.strip().lower()
+    rows: list[dict] = []
+    lists = reminders_lists(include_metadata=True)
+    for item in lists:
+        if not isinstance(item, dict):
+            continue
+        list_id = _nn(item.get("id"))
+        list_name = _nn(item.get("name"))
+        parsed = _reminders_list_applescript(str(list_name) if list_name else None, include_completed, str(list_id) if list_id else None, capped)
+        if isinstance(parsed, dict):
+            continue
+        for row in _normalize_reminder_rows(parsed):
+            haystack = " ".join(str(part or "") for part in [row.get("title"), row.get("notes")]).lower()
+            if not query_lower or query_lower in haystack:
+                rows.append(row)
+                if len(rows) >= capped:
+                    return rows
+    return rows
 
 
 def _resolve_reminder_list_target(
@@ -726,7 +762,11 @@ def _reminders_matching_due(kind: str, limit: int) -> list[dict]:
             timeout=20,
         )
     except NativeProviderUnavailable as exc:
-        raise _native_required_error(f"reminders_{kind}") from exc
+        parsed = _reminders_search_applescript("", limit=200, include_completed=False)
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        parsed = _reminders_search_applescript("", limit=200, include_completed=False)
     rows = _normalize_reminder_rows(parsed if isinstance(parsed, list) else [])
     today = datetime.now().date()
     matches: list[dict] = []
@@ -767,7 +807,11 @@ def reminders_search(query: str, limit: int = 50, include_completed: bool = Fals
             timeout=20,
         )
     except NativeProviderUnavailable as exc:
-        raise _native_required_error("reminders_search") from exc
+        parsed = _reminders_search_applescript(query, limit=capped, include_completed=include_completed)
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        parsed = _reminders_search_applescript(query, limit=capped, include_completed=include_completed)
     return _normalize_reminder_rows(parsed if isinstance(parsed, list) else [])
 
 
@@ -865,6 +909,10 @@ def reminders_create(
         )
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        data = None
     if isinstance(data, dict) and data.get("id"):
         return _with_reminders_app_action({"id": data["id"], "success": True})
 
@@ -889,6 +937,10 @@ def reminders_complete(reminder_id: str) -> dict:
         data = try_native("reminders", "complete", {"reminder_id": reminder_id}, timeout=15)
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        data = None
     if isinstance(data, dict):
         return _with_reminders_app_action({"id": data.get("id") or reminder_id, "success": True})
 
@@ -912,6 +964,10 @@ def reminders_delete(reminder_id: str, confirm: bool = False) -> dict:
     try:
         data = try_native("reminders", "delete", {"reminder_id": reminder_id}, timeout=15)
     except NativeProviderUnavailable:
+        data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         data = None
     if isinstance(data, dict):
         return _with_reminders_app_action({"id": data.get("id") or reminder_id, "success": True})

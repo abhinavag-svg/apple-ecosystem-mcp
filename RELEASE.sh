@@ -17,7 +17,7 @@ verify_bundle_contents() {
     local listing
     listing=$(unzip -Z1 "$bundle")
 
-    for required in manifest.json README.md PRIVACY.md LICENSE pyproject.toml uv.lock server/runner.py bin/apple-ecosystem-helper; do
+    for required in manifest.json README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json server/node-launcher.mjs src/apple_ecosystem_mcp/__main__.py bin/apple-ecosystem-helper; do
         if ! echo "$listing" | grep -qx "$required"; then
             echo "❌ ERROR: Required bundle file missing: $required"
             exit 1
@@ -55,13 +55,17 @@ echo ""
 echo "📝 Updating version to $VERSION..."
 sed -i '' "s/version = \"[0-9.]*\"/version = \"$VERSION\"/" pyproject.toml
 sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" manifest.json
+sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" manifest.uv.json
+sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" manifest.node.json
+sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" package.json
+sed -i '' "s/\"version\": \"[0-9.]*\"/\"version\": \"$VERSION\"/" package-lock.json
 UV_CACHE_DIR=.uv-cache uv lock
 echo "✅ Version bumped to $VERSION"
 echo ""
 
 # Commit version bump
 echo "💾 Committing version bump..."
-git add pyproject.toml manifest.json uv.lock
+git add pyproject.toml manifest.json manifest.uv.json manifest.node.json package.json package-lock.json uv.lock
 git commit -m "chore: release v$VERSION"
 echo "✅ Version bump committed"
 echo ""
@@ -70,11 +74,20 @@ echo ""
 echo "📦 Building MCPB bundle..."
 rm -rf mcpb
 mkdir -p native/build
-swiftc native/apple-ecosystem-helper.swift -o native/build/apple-ecosystem-helper
+CLANG_MODULE_CACHE_PATH=/private/tmp/apple-ecosystem-clang-cache swiftc native/apple-ecosystem-helper.swift \
+    -Xlinker -sectcreate \
+    -Xlinker __TEXT \
+    -Xlinker __info_plist \
+    -Xlinker native/apple-ecosystem-helper.Info.plist \
+    -o native/build/apple-ecosystem-helper
 mkdir -p mcpb/contents
 mkdir -p mcpb/contents/bin
-cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock mcpb/contents/
-cp -r server src mcpb/contents/
+mkdir -p mcpb/contents/server
+mkdir -p mcpb/contents/node_modules
+cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json mcpb/contents/
+cp -r src mcpb/contents/
+cp server/runner.py mcpb/contents/server/
+cp node/server/node-launcher.mjs mcpb/contents/server/
 cp native/build/apple-ecosystem-helper mcpb/contents/bin/
 find mcpb/contents -name .DS_Store -delete
 find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
@@ -83,6 +96,7 @@ zip -q -r "../apple-ecosystem-mcp.mcpb" .
 cd ../..
 ls -lh "mcpb/apple-ecosystem-mcp.mcpb"
 verify_bundle_contents "mcpb/apple-ecosystem-mcp.mcpb"
+python3 scripts/validate_mcpb.py --mode node mcpb/apple-ecosystem-mcp.mcpb
 echo "✅ MCPB bundle created"
 echo ""
 
@@ -102,15 +116,20 @@ echo ""
 # Create GitHub release
 echo "🚀 Creating GitHub release..."
 gh release create "v$VERSION" \
-    --title "v$VERSION — Apple Ecosystem MCP Release" \
-    --notes "Apple Ecosystem MCP v$VERSION is the first stable release for local Claude workflows across Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive.
+    --title "v$VERSION — Apple Ecosystem MCPB Installability And Permission UX" \
+    --notes "Apple Ecosystem MCP v$VERSION focuses on making the Claude Desktop extension install cleanly as an MCPB while preserving the existing Apple tool behavior.
 
 Highlights:
-- Local-first Apple productivity tools for Claude Desktop and Claude Code.
-- Reliable Mail triage, search, open, draft, and read workflows with Inbox-focused fallbacks.
-- Native Calendar, Contacts, and Reminders access through the bundled macOS helper.
-- Notes reads tuned for large rich notes.
-- Minimal MCPB package with README, privacy policy, license, source, runner, and native helper.
+- Ships the primary MCPB as a Node-runtime bundle for current Claude Desktop compatibility.
+- Adds a thin Node launcher that starts the existing Python tool engine with vendored dependencies.
+- Keeps a separate future UV-runtime manifest/build target for Claude builds that support server.type = uv.
+- Adds stricter MCPB validation for manifest version, author GitHub URL, required bundled files, forbidden local artifacts, and runtime commands.
+- Embeds macOS privacy usage descriptions in the native helper for Calendar, Contacts, and Reminders permission prompts.
+- Adds an original local companion app skeleton for permission/status workflows inspired by native macOS control-plane patterns.
+- Improves Contacts and Reminders fallback behavior when native framework access is denied or unavailable.
+- Fixes the Contacts AppleScript fallback compile error seen during live lookup after native permission denial.
+- Updates README and release guidance for the install-first MCPB path, Node compatibility, and future UV bundle.
+- Includes the latest README screenshot added directly on GitHub before this release.
 
 Install the attached apple-ecosystem-mcp.mcpb in Claude Desktop. See README.md for setup, permissions, troubleshooting, and support."
 echo ""

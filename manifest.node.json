@@ -1,9 +1,9 @@
 {
   "manifest_version": "0.4",
-  "name": "apple-ecosystem-mcp",
+  "name": "apple-ecosystem-mcp-node",
   "display_name": "Apple Ecosystem",
   "version": "1.0.0",
-  "description": "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive",
+  "description": "Node.js launcher bundle for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive",
   "author": {
     "name": "Abhinav Agrawal",
     "email": "apple_anthropic_mcp@icloud.com",

@@ -35,7 +35,7 @@ def test_check_permissions_detects_automation_denial(monkeypatch, capsys, denied
     monkeypatch.setattr(os, "listdir", lambda *_args, **_kwargs: [])
 
     check_permissions()
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert f"⚠ Missing: {name}" in out
     assert "System Settings > Privacy & Security > Automation" in out
 
@@ -51,7 +51,7 @@ def test_check_permissions_detects_apple_events_denial_text(monkeypatch, capsys)
     monkeypatch.setattr(os, "listdir", lambda *_args, **_kwargs: [])
 
     check_permissions()
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "⚠ Missing: Automation → Mail" in out
 
 
@@ -64,7 +64,7 @@ def test_check_permissions_detects_full_disk_access_denial(monkeypatch, capsys):
     monkeypatch.setattr(os, "listdir", lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError()))
 
     check_permissions()
-    out = capsys.readouterr().out
+    out = capsys.readouterr().err
     assert "⚠ Missing: Full Disk Access" in out
     assert "System Settings > Privacy & Security > Full Disk Access" in out
 

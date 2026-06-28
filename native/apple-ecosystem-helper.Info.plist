@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.abhinavagrawal.apple-ecosystem-mcp.helper</string>
+	<key>CFBundleName</key>
+	<string>Apple Ecosystem Helper</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Apple Ecosystem uses Calendar access only when you ask Claude to work with your local calendar events.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Apple Ecosystem uses Calendar access only when you ask Claude to work with your local calendar events.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Apple Ecosystem uses Contacts access only when you ask Claude to search or update local contacts.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Apple Ecosystem uses Reminders access only when you ask Claude to work with your local reminders.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Apple Ecosystem uses Reminders access only when you ask Claude to work with your local reminders.</string>
+</dict>
+</plist>

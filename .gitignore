@@ -3,10 +3,13 @@ dist/
 build/
 native/build/
 mcpb/
+mcpb-node/
+mcpb-uv/
 mcpb/*.mcpb
 *.mcpb
 *.dxt
 *.egg-info/
+node_modules/
 
 # Environment & Secrets
 .env

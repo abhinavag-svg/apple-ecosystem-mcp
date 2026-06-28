@@ -146,7 +146,11 @@ func requireEventAccess(_ store: EKEventStore, entityType: EKEntityType) throws 
 
     _ = semaphore.wait(timeout: .now() + 30)
     if let requestError {
-        throw HelperError(code: "native_backend_error", message: requestError.localizedDescription, recoverable: true)
+        let message = requestError.localizedDescription
+        if message.localizedCaseInsensitiveContains("access denied") {
+            throw HelperError(code: "permission_denied", message: "Native access is denied in macOS privacy settings.", recoverable: true)
+        }
+        throw HelperError(code: "native_backend_error", message: message, recoverable: true)
     }
     if !granted {
         throw HelperError(code: "permission_not_determined", message: "Native access has not been granted yet.", recoverable: true)
@@ -170,7 +174,11 @@ func requireContactsAccess(_ store: CNContactStore) throws {
     }
     _ = semaphore.wait(timeout: .now() + 30)
     if let requestError {
-        throw HelperError(code: "native_backend_error", message: requestError.localizedDescription, recoverable: true)
+        let message = requestError.localizedDescription
+        if message.localizedCaseInsensitiveContains("access denied") {
+            throw HelperError(code: "permission_denied", message: "Contacts access is denied in macOS privacy settings.", recoverable: true)
+        }
+        throw HelperError(code: "native_backend_error", message: message, recoverable: true)
     }
     if !granted {
         throw HelperError(code: "permission_not_determined", message: "Contacts access has not been granted yet.", recoverable: true)

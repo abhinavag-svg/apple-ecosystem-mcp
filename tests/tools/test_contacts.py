@@ -112,6 +112,16 @@ def test_contacts_search_allows_empty_query_with_group(monkeypatch):
     assert run_mock.call_args.args[3] == "Friends"
 
 
+def test_contacts_search_falls_back_when_native_contacts_permission_denied(monkeypatch):
+    def deny_native(*args, **kwargs):
+        raise contacts.NativeProviderError("permission_denied", "Contacts access is denied", recoverable=True)
+
+    monkeypatch.setattr(contacts, "try_native", deny_native)
+    run_mock = _patch_run(monkeypatch, "[]")
+    assert contacts.contacts_search("Ada") == []
+    assert run_mock.called
+
+
 def test_contacts_search_script_scans_inside_contacts_tell_block():
     assert "on nativeMatches" not in contacts._SEARCH_SCRIPT
     assert "people whose value of emails" not in contacts._SEARCH_SCRIPT

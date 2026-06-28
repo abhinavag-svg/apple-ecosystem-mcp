@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleExecutable</key>
+	<string>AppleEcosystemControl</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.abhinavagrawal.apple-ecosystem-mcp.control</string>
+	<key>CFBundleName</key>
+	<string>Apple Ecosystem</string>
+	<key>CFBundleDisplayName</key>
+	<string>Apple Ecosystem</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Apple Ecosystem uses Automation to check and request access to Mail and Notes for local MCP tools.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Apple Ecosystem uses Calendar access only when you ask Claude to work with your local calendar events.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Apple Ecosystem uses Calendar access only when you ask Claude to work with your local calendar events.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Apple Ecosystem uses Contacts access only when you ask Claude to search or update local contacts.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Apple Ecosystem uses Reminders access only when you ask Claude to work with your local reminders.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Apple Ecosystem uses Reminders access only when you ask Claude to work with your local reminders.</string>
+</dict>
+</plist>

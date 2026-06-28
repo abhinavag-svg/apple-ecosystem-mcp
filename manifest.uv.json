@@ -14,18 +14,11 @@
     "url": "https://github.com/abhinavag-svg/apple-ecosystem-mcp.git"
   },
   "server": {
-    "type": "node",
-    "entry_point": "server/node-launcher.mjs",
-    "mcp_config": {
-      "command": "node",
-      "args": ["${__dirname}/server/node-launcher.mjs"]
-    }
+    "type": "uv",
+    "entry_point": "src/apple_ecosystem_mcp/__main__.py"
   },
   "compatibility": {
-    "platforms": ["darwin"],
-    "runtimes": {
-      "node": ">=18.0.0"
-    }
+    "platforms": ["darwin"]
   },
   "privacy_policies": [
     "https://github.com/abhinavag-svg/apple-ecosystem-mcp/blob/main/PRIVACY.md"

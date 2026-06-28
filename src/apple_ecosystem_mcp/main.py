@@ -7,12 +7,16 @@ from .permissions import check_permissions
 from . import mail_cli
 from . import scheduler_cli
 from .server import run
+from . import __version__
 
 
 def main() -> None:
     """Entry point: handle --version flag and start MCP server."""
     if "--version" in sys.argv:
-        print(importlib.metadata.version("apple-ecosystem-mcp"))
+        try:
+            print(importlib.metadata.version("apple-ecosystem-mcp"))
+        except importlib.metadata.PackageNotFoundError:
+            print(__version__)
         sys.exit(0)
 
     if len(sys.argv) > 1 and sys.argv[1] == "schedule":
