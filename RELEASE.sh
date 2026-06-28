@@ -88,6 +88,7 @@ cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock pa
 cp -r src mcpb/contents/
 cp server/runner.py mcpb/contents/server/
 cp node/server/node-launcher.mjs mcpb/contents/server/
+env UV_CACHE_DIR=/private/tmp/uv-cache uv run python scripts/vendor_python_deps.py mcpb/contents/server/lib
 cp native/build/apple-ecosystem-helper mcpb/contents/bin/
 find mcpb/contents -name .DS_Store -delete
 find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +

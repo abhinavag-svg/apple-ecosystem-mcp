@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "apple-ecosystem-mcp-node",
   "display_name": "Apple Ecosystem",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Node.js launcher bundle for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive",
   "author": {
     "name": "Abhinav Agrawal",
