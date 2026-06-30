@@ -72,30 +72,7 @@ echo ""
 
 # Build MCPB
 echo "📦 Building MCPB bundle..."
-rm -rf mcpb
-mkdir -p native/build
-CLANG_MODULE_CACHE_PATH=/private/tmp/apple-ecosystem-clang-cache swiftc native/apple-ecosystem-helper.swift \
-    -Xlinker -sectcreate \
-    -Xlinker __TEXT \
-    -Xlinker __info_plist \
-    -Xlinker native/apple-ecosystem-helper.Info.plist \
-    -o native/build/apple-ecosystem-helper
-mkdir -p mcpb/contents
-mkdir -p mcpb/contents/bin
-mkdir -p mcpb/contents/server
-mkdir -p mcpb/contents/node_modules
-cp manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json mcpb/contents/
-cp -r src mcpb/contents/
-cp server/runner.py mcpb/contents/server/
-cp node/server/node-launcher.mjs mcpb/contents/server/
-env UV_CACHE_DIR=/private/tmp/uv-cache uv run python scripts/vendor_python_deps.py mcpb/contents/server/lib
-cp native/build/apple-ecosystem-helper mcpb/contents/bin/
-find mcpb/contents -name .DS_Store -delete
-find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
-cd mcpb/contents
-zip -q -r "../apple-ecosystem-mcp.mcpb" .
-cd ../..
-ls -lh "mcpb/apple-ecosystem-mcp.mcpb"
+make build
 verify_bundle_contents "mcpb/apple-ecosystem-mcp.mcpb"
 python3 scripts/validate_mcpb.py --mode node mcpb/apple-ecosystem-mcp.mcpb
 echo "✅ MCPB bundle created"
@@ -117,20 +94,17 @@ echo ""
 # Create GitHub release
 echo "🚀 Creating GitHub release..."
 gh release create "v$VERSION" \
-    --title "v$VERSION — Apple Ecosystem MCPB Installability And Permission UX" \
-    --notes "Apple Ecosystem MCP v$VERSION focuses on making the Claude Desktop extension install cleanly as an MCPB while preserving the existing Apple tool behavior.
+    --title "v$VERSION — Calendar Reliability And Helper Signing" \
+    --notes "Apple Ecosystem MCP v$VERSION focuses on Calendar reliability and shipping the native helper with a stable ad-hoc signing identity.
 
 Highlights:
-- Ships the primary MCPB as a Node-runtime bundle for current Claude Desktop compatibility.
-- Adds a thin Node launcher that starts the existing Python tool engine with vendored dependencies.
-- Keeps a separate future UV-runtime manifest/build target for Claude builds that support server.type = uv.
-- Adds stricter MCPB validation for manifest version, author GitHub URL, required bundled files, forbidden local artifacts, and runtime commands.
-- Embeds macOS privacy usage descriptions in the native helper for Calendar, Contacts, and Reminders permission prompts.
-- Adds an original local companion app skeleton for permission/status workflows inspired by native macOS control-plane patterns.
-- Improves Contacts and Reminders fallback behavior when native framework access is denied or unavailable.
-- Fixes the Contacts AppleScript fallback compile error seen during live lookup after native permission denial.
-- Updates README and release guidance for the install-first MCPB path, Node compatibility, and future UV bundle.
-- Includes the latest README screenshot added directly on GitHub before this release.
+- Signs the bundled native helper with a stable ad-hoc bundle identifier during local and release builds.
+- Aligns the release script with the canonical make build bundle path so release artifacts match local validation.
+- Lets Calendar tools fall back to AppleScript on recoverable native Calendar permission/backend errors.
+- Launches Calendar before AppleScript Calendar access to make permission prompting and fallback behavior more reliable.
+- Bounds broad Calendar event scans and avoids attendee expansion in the fallback list path for better responsiveness.
+- Refuses to report an empty Calendar result when all fallback calendars timed out.
+- Adds regression coverage for Calendar fallback, timeout, limit, and helper-signing behavior.
 
 Install the attached apple-ecosystem-mcp.mcpb in Claude Desktop. See README.md for setup, permissions, troubleshooting, and support."
 echo ""

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
 from mcp.types import ToolAnnotations
 
 from ..bridge import run_applescript, cache_inventory
-from ..native_provider import NativeProviderUnavailable, try_native
+from ..native_provider import NativeProviderError, NativeProviderUnavailable, try_native
 from ..preferences import PreferencesStore
 from ..resolver import ResolverError, resolve_target
 from ..server import mcp
@@ -137,6 +138,7 @@ on run argv
     set out to "["
     set firstItem to true
     tell application "Calendar"
+        launch
         repeat with c in calendars
             if not firstItem then set out to out & ","
             set firstItem to false
@@ -181,16 +183,51 @@ end replace
 """
 
 
+_LIST_CALENDAR_TARGETS_SCRIPT = _JSON_HELPERS + r"""
+on run argv
+    tell application "Calendar"
+        launch
+        set rows to {}
+        repeat with i from 1 to count of calendars
+            set c to item i of calendars
+            try
+                set acct to name of (account of c)
+            on error
+                set acct to missing value
+            end try
+            try
+                set w to writable of c
+            on error
+                set w to true
+            end try
+            set row to "{\"index\":" & i & ",\"uid\":" & my _js(name of c) & ",\"name\":" & my _js(name of c) & ",\"account_name\":" & my _js(acct) & ",\"writable\":" & my _bool(w) & "}"
+            set end of rows to row
+        end repeat
+    end tell
+    set AppleScript's text item delimiters to ","
+    set out to "[" & (rows as string) & "]"
+    set AppleScript's text item delimiters to ""
+    return out
+end run
+"""
+
+
 _LIST_EVENTS_SCRIPT = _JSON_HELPERS + r"""
 on run argv
     set startISO to item 1 of argv
     set endISO to item 2 of argv
     set filterUID to item 3 of argv
+    set lim to 50
+    try
+        set lim to item 4 of argv as integer
+    end try
     set startDate to my _parseISO(startISO)
     set endDate to my _parseISO(endISO)
 
     tell application "Calendar"
+        launch
         set items_ to {}
+        set count_ to 0
         repeat with c in calendars
             set cuid to name of c
             if filterUID is "" or filterUID is cuid then
@@ -214,23 +251,88 @@ on run argv
                     end try
                     set sd to start date of ev
                     set ed to end date of ev
-                    set invList to {}
-                    try
-                        repeat with a in (attendees of ev)
-                            set addr to missing value
-                            try
-                                set addr to email of a
-                            end try
-                            if addr is not missing value and addr is not "" then set end of invList to my _js(addr)
-                        end repeat
-                    end try
-                    set AppleScript's text item delimiters to ","
-                    set invJoined to invList as string
-                    set AppleScript's text item delimiters to ""
-                    set row to "{\"uid\":" & my _js(u) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(cuid) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[" & invJoined & "],\"invitees\":[" & invJoined & "]}"
+                    set row to "{\"uid\":" & my _js(u) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(cuid) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[],\"invitees\":[]}"
                     set end of items_ to row
+                    set count_ to count_ + 1
+                    if count_ >= lim then exit repeat
                 end repeat
             end if
+            if count_ >= lim then exit repeat
+        end repeat
+    end tell
+    set AppleScript's text item delimiters to ","
+    set out to "[" & (items_ as string) & "]"
+    set AppleScript's text item delimiters to ""
+    return out
+end run
+
+on _parseISO(s)
+    -- Accept "YYYY-MM-DDTHH:MM:SS" or "YYYY-MM-DD"
+    set yr to (text 1 thru 4 of s) as integer
+    set mo to (text 6 thru 7 of s) as integer
+    set dy to (text 9 thru 10 of s) as integer
+    if (length of s) ≥ 19 then
+        set hh to (text 12 thru 13 of s) as integer
+        set mm to (text 15 thru 16 of s) as integer
+        set ss to (text 18 thru 19 of s) as integer
+    else
+        set hh to 0
+        set mm to 0
+        set ss to 0
+    end if
+    set d to current date
+    set year of d to yr
+    set monthList to {January, February, March, April, May, June, July, August, September, October, November, December}
+    set month of d to item mo of monthList
+    set day of d to dy
+    set time of d to hh * 3600 + mm * 60 + ss
+    return d
+end _parseISO
+"""
+
+
+_LIST_EVENTS_BY_INDEX_SCRIPT = _JSON_HELPERS + r"""
+on run argv
+    set startISO to item 1 of argv
+    set endISO to item 2 of argv
+    set calendarIndex to item 3 of argv as integer
+    set lim to 50
+    try
+        set lim to item 4 of argv as integer
+    end try
+    set startDate to my _parseISO(startISO)
+    set endDate to my _parseISO(endISO)
+
+    tell application "Calendar"
+        launch
+        set c to item calendarIndex of calendars
+        set cuid to name of c
+        set items_ to {}
+        set count_ to 0
+        try
+            set evs to (every event of c whose start date < endDate and end date > startDate)
+        on error
+            set evs to {}
+        end try
+        repeat with ev in evs
+            set t to summary of ev
+            set u to uid of ev
+            try
+                set loc to location of ev
+            on error
+                set loc to missing value
+            end try
+            try
+                set allday to allday event of ev
+            on error
+                set allday to false
+            end try
+            set sd to start date of ev
+            set ed to end date of ev
+            set row to "{\"uid\":" & my _js(u) & ",\"title\":" & my _js(t) & ",\"start\":" & my _iso(sd) & ",\"end\":" & my _iso(ed) & ",\"location\":" & my _js(loc) & ",\"all_day\":" & my _bool(allday) & ",\"calendar_uid\":" & my _js(cuid) & ",\"calendar_name\":" & my _js(name of c) & ",\"attendees\":[],\"invitees\":[]}"
+            set end of items_ to row
+            set count_ to count_ + 1
+            if count_ >= lim then exit repeat
         end repeat
     end tell
     set AppleScript's text item delimiters to ","
@@ -268,6 +370,7 @@ _GET_EVENT_SCRIPT = _JSON_HELPERS + r"""
 on run argv
     set targetUID to item 1 of argv
     tell application "Calendar"
+        launch
         repeat with c in calendars
             try
                 set ev to first event of c whose uid is targetUID
@@ -330,6 +433,7 @@ on run argv
     set endDate to my _parseISO(endISO)
 
     tell application "Calendar"
+        launch
         if calUID is "" then
             set targetCal to first calendar whose writable is true
         else
@@ -393,6 +497,7 @@ on run argv
     set clearNotesFlag to item 9 of argv
 
     tell application "Calendar"
+        launch
         set found to missing value
         repeat with c in calendars
             try
@@ -492,6 +597,7 @@ _DELETE_EVENT_SCRIPT = r"""
 on run argv
     set targetUID to item 1 of argv
     tell application "Calendar"
+        launch
         repeat with c in calendars
             try
                 set ev to first event of c whose uid is targetUID
@@ -607,6 +713,12 @@ def _calendar_open_app_action(*, label: str = "Open Calendar") -> dict[str, Any]
     return open_app_next_action("Calendar", label=label)
 
 
+def _native_should_fallback(exc: NativeProviderError) -> bool:
+    if exc.code in {"permission_denied", "permission_not_determined", "native_backend_error"}:
+        return exc.recoverable
+    return False
+
+
 def _event_success_payload(event_id: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {"uid": event_id, "success": True}
     if event_id:
@@ -623,6 +735,10 @@ def _calendars_cached() -> list[dict]:
     try:
         data = try_native("calendar", "list-calendars", timeout=15)
     except NativeProviderUnavailable:
+        data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         data = None
     if isinstance(data, list):
         normalized: list[dict] = []
@@ -685,6 +801,62 @@ def _resolve_calendar_uid(calendar_uid: str | None) -> tuple[str | None, dict[st
         use_default=should_use_default,
     )
     return str(resolved.item["id"]), resolved.to_dict()
+
+
+def _calendar_uids_for_applescript(calendar_uid: str | None) -> list[str]:
+    if calendar_uid:
+        return [calendar_uid]
+    seen: set[str] = set()
+    uids: list[str] = []
+    for calendar in _calendars_cached():
+        uid = calendar.get("uid")
+        if not isinstance(uid, str) or not uid or uid in seen:
+            continue
+        seen.add(uid)
+        uids.append(uid)
+    return uids
+
+
+def _list_events_applescript(
+    start_norm: str,
+    end_norm: str,
+    calendar_uid: str | None,
+    capped: int,
+) -> list[dict]:
+    calendar_uids = _calendar_uids_for_applescript(calendar_uid)
+    if not calendar_uids:
+        calendar_uids = [""]
+
+    events: list[Any] = []
+    skipped: list[str] = []
+    timeout = 35 if calendar_uid else 1
+    deadline = None if calendar_uid else time.monotonic() + 18
+    for uid in calendar_uids:
+        if deadline is not None and time.monotonic() >= deadline:
+            skipped.extend(calendar_uids[calendar_uids.index(uid) :])
+            break
+        try:
+            raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, uid, str(capped), timeout=timeout)
+        except RuntimeError as exc:
+            if "timed out" in str(exc).lower() and not calendar_uid:
+                skipped.append(uid)
+                continue
+            raise
+        data = _parse_json(raw)
+        if not isinstance(data, list):
+            raise RuntimeError("Unexpected events payload")
+        events.extend(data)
+        if len(events) >= capped:
+            break
+    if skipped and not events and not calendar_uid:
+        skipped_text = ", ".join(skipped[:5])
+        if len(skipped) > 5:
+            skipped_text += f", and {len(skipped) - 5} more"
+        raise RuntimeError(
+            "Calendar lookup was incomplete because some calendars timed out: "
+            f"{skipped_text}. I cannot safely report that the day is free."
+        )
+    return events[:capped]
 
 
 def _merge_intervals(intervals: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
@@ -753,15 +925,16 @@ def calendar_list_events(
         )
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        data = None
     if isinstance(data, list):
         rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
         return _add_calendar_event_actions_to_rows(rows)
 
-    raw = run_applescript(_LIST_EVENTS_SCRIPT, start_norm, end_norm, calendar_uid or "", timeout=35)
-    data = _parse_json(raw)
-    if not isinstance(data, list):
-        raise RuntimeError("Unexpected events payload")
-    rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data[:capped]]
+    data = _list_events_applescript(start_norm, end_norm, calendar_uid, capped)
+    rows = [_with_attendees_alias(ev) if isinstance(ev, dict) else ev for ev in data]
     return _add_calendar_event_actions_to_rows(rows)
 
 
@@ -771,6 +944,10 @@ def calendar_get_event(event_id: str) -> dict:
     try:
         data = try_native("calendar", "get-event", {"event_id": event_id}, timeout=15)
     except NativeProviderUnavailable:
+        data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         data = None
     if isinstance(data, dict):
         return _add_calendar_event_actions(_with_attendees_alias(data), detail=True)
@@ -831,6 +1008,10 @@ def calendar_create_event(
             timeout=20,
         )
     except NativeProviderUnavailable:
+        data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         data = None
     if isinstance(data, dict) and data.get("uid"):
         return _event_success_payload(data["uid"])
@@ -923,6 +1104,10 @@ def calendar_update_event(
         )
     except NativeProviderUnavailable:
         data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
+        data = None
     if isinstance(data, dict) and data.get("uid"):
         return _event_success_payload(data["uid"])
     if url or clear_url or all_day is not None:
@@ -974,6 +1159,10 @@ def calendar_delete_event(event_id: str, confirm: bool = False) -> dict:
     try:
         data = try_native("calendar", "delete-event", {"event_id": event_id}, timeout=20)
     except NativeProviderUnavailable:
+        data = None
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         data = None
     if isinstance(data, dict):
         payload = {"uid": data.get("uid") or event_id, "success": True}
@@ -1126,6 +1315,21 @@ def calendar_search(
             timeout=20,
         )
     except NativeProviderUnavailable:
+        events = calendar_list_events(start_norm, end_norm, calendar_uid=calendar_uid, limit=LIST_EVENTS_MAX_LIMIT)
+        needle = query.casefold()
+        return _add_calendar_event_actions_to_rows([
+            ev
+            for ev in events
+            if isinstance(ev, dict)
+            and (
+                needle in str(ev.get("title") or "").casefold()
+                or needle in str(ev.get("location") or "").casefold()
+                or needle in str(ev.get("notes") or "").casefold()
+            )
+        ][:capped])
+    except NativeProviderError as exc:
+        if not _native_should_fallback(exc):
+            raise
         events = calendar_list_events(start_norm, end_norm, calendar_uid=calendar_uid, limit=LIST_EVENTS_MAX_LIMIT)
         needle = query.casefold()
         return _add_calendar_event_actions_to_rows([

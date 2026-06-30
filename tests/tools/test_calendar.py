@@ -137,12 +137,126 @@ def test_list_events_passes_args_via_argv_and_returns_records(monkeypatch):
     assert args[1] == "2026-04-22T00:00:00"
     assert args[2] == "2026-04-22T23:59:59"
     assert args[3] == "uid-1"
+    assert args[4] == str(cal.LIST_EVENTS_DEFAULT_LIMIT)
     assert out[0]["uid"] == "ev-1"
     assert "calendar_uid" in out[0]
 
 
+def test_list_events_falls_back_when_native_calendar_permission_not_determined(monkeypatch):
+    def permission_error(*_args, **_kwargs):
+        raise cal.NativeProviderError(
+            "permission_not_determined",
+            "Native access has not been granted yet.",
+            recoverable=True,
+        )
+
+    monkeypatch.setattr(cal, "try_native", permission_error)
+    monkeypatch.setattr(cal, "_calendar_uids_for_applescript", Mock(return_value=[""]))
+    _mk_run(
+        monkeypatch,
+        json.dumps(
+            [
+                {
+                    "uid": "ev-1",
+                    "title": "Budget review",
+                    "start": "2026-04-22T09:00:00",
+                    "end": "2026-04-22T10:00:00",
+                }
+            ]
+        ),
+    )
+
+    out = cal.calendar_list_events("2026-04-22T00:00:00", "2026-04-23T00:00:00")
+
+    assert out[0]["uid"] == "ev-1"
+
+
+def test_list_events_falls_back_when_native_calendar_backend_error(monkeypatch):
+    def backend_error(*_args, **_kwargs):
+        raise cal.NativeProviderError("native_backend_error", "Temporary failure", recoverable=True)
+
+    monkeypatch.setattr(cal, "try_native", backend_error)
+    monkeypatch.setattr(cal, "_calendar_uids_for_applescript", Mock(return_value=[""]))
+    _mk_run(
+        monkeypatch,
+        json.dumps(
+            [
+                {
+                    "uid": "ev-1",
+                    "title": "Budget review",
+                    "start": "2026-04-22T09:00:00",
+                    "end": "2026-04-22T10:00:00",
+                }
+            ]
+        ),
+    )
+
+    out = cal.calendar_list_events("2026-04-22T00:00:00", "2026-04-23T00:00:00")
+    assert out[0]["uid"] == "ev-1"
+
+
+def test_list_events_skips_timed_out_calendars_in_broad_applescript_fallback(monkeypatch):
+    def unavailable(*_args, **_kwargs):
+        raise cal.NativeProviderUnavailable("missing")
+
+    def run_mock(_script, *_args, **_kwargs):
+        calendar_uid = _args[2]
+        if calendar_uid == "slow":
+            raise RuntimeError("AppleScript timed out")
+        return json.dumps(
+            [
+                {
+                    "uid": "ev-fast",
+                    "title": "Budget review",
+                    "start": "2026-04-22T09:00:00",
+                    "end": "2026-04-22T10:00:00",
+                    "calendar_uid": calendar_uid,
+                }
+            ]
+        )
+
+    monkeypatch.setattr(cal, "try_native", unavailable)
+    monkeypatch.setattr(cal, "_calendar_uids_for_applescript", Mock(return_value=["slow", "fast"]))
+    monkeypatch.setattr(cal, "run_applescript", Mock(side_effect=run_mock))
+
+    out = cal.calendar_list_events("2026-04-22T00:00:00", "2026-04-23T00:00:00")
+
+    assert [event["uid"] for event in out] == ["ev-fast"]
+
+
+def test_list_events_does_not_return_empty_when_calendars_timed_out(monkeypatch):
+    def unavailable(*_args, **_kwargs):
+        raise cal.NativeProviderUnavailable("missing")
+
+    monkeypatch.setattr(cal, "try_native", unavailable)
+    monkeypatch.setattr(cal, "_calendar_uids_for_applescript", Mock(return_value=["slow"]))
+    monkeypatch.setattr(cal, "run_applescript", Mock(side_effect=RuntimeError("AppleScript timed out")))
+
+    with pytest.raises(RuntimeError, match="cannot safely report that the day is free"):
+        cal.calendar_list_events("2026-04-22T00:00:00", "2026-04-23T00:00:00")
+
+
 def test_list_events_script_uses_overlap_predicate():
     assert "start date < endDate and end date > startDate" in cal._LIST_EVENTS_SCRIPT
+
+
+def test_list_events_script_bounds_work_inside_applescript():
+    assert "set lim to item 4 of argv as integer" in cal._LIST_EVENTS_SCRIPT
+    assert "if count_ >= lim then exit repeat" in cal._LIST_EVENTS_SCRIPT
+    assert "repeat with a in (attendees of ev)" not in cal._LIST_EVENTS_SCRIPT
+
+
+def test_calendar_applescript_fallbacks_launch_calendar_before_access():
+    scripts = [
+        cal._LIST_CALENDARS_SCRIPT,
+        cal._LIST_EVENTS_SCRIPT,
+        cal._GET_EVENT_SCRIPT,
+        cal._CREATE_EVENT_SCRIPT,
+        cal._UPDATE_EVENT_SCRIPT,
+        cal._DELETE_EVENT_SCRIPT,
+    ]
+    for script in scripts:
+        assert 'tell application "Calendar"\n        launch' in script
 
 
 def test_list_events_exposes_attendees(monkeypatch):
@@ -180,6 +294,7 @@ def test_list_events_calendar_uid_none_sent_as_empty_string(monkeypatch):
     cal.calendar_list_events("2026-04-22", "2026-04-23")
     # None must not leak into the AppleScript arg; default is empty string.
     assert run_mock.call_args.args[3] == ""
+    assert run_mock.call_args.args[4] == str(cal.LIST_EVENTS_DEFAULT_LIMIT)
 
 
 def test_list_events_applies_default_limit(monkeypatch):
@@ -215,9 +330,10 @@ def test_list_events_caps_at_max(monkeypatch):
         }
         for i in range(500)
     ]
-    _mk_run(monkeypatch, json.dumps(many))
+    run_mock = _mk_run(monkeypatch, json.dumps(many))
     out = cal.calendar_list_events("2026-04-22", "2026-04-23", limit=999)
     assert len(out) == cal.LIST_EVENTS_MAX_LIMIT
+    assert run_mock.call_args.args[4] == str(cal.LIST_EVENTS_MAX_LIMIT)
 
 
 def test_list_events_rejects_bad_iso(monkeypatch):
@@ -856,6 +972,43 @@ def test_calendar_search_falls_back_to_local_filter(monkeypatch):
     )
 
     assert cal.calendar_search("budget")[0]["uid"] == "1"
+
+
+def test_calendar_search_falls_back_when_native_calendar_permission_not_determined(monkeypatch):
+    def permission_error(*_args, **_kwargs):
+        raise cal.NativeProviderError(
+            "permission_not_determined",
+            "Native access has not been granted yet.",
+            recoverable=True,
+        )
+
+    monkeypatch.setattr(cal, "try_native", permission_error)
+    list_mock = Mock(
+        return_value=[
+            {"uid": "1", "title": "Budget review", "location": None, "notes": None},
+            {"uid": "2", "title": "Lunch", "location": "Cafe", "notes": None},
+        ]
+    )
+    monkeypatch.setattr(cal, "calendar_list_events", list_mock)
+
+    assert cal.calendar_search("budget")[0]["uid"] == "1"
+
+
+def test_list_calendars_falls_back_when_native_calendar_permission_not_determined(monkeypatch):
+    def permission_error(*_args, **_kwargs):
+        raise cal.NativeProviderError(
+            "permission_not_determined",
+            "Native access has not been granted yet.",
+            recoverable=True,
+        )
+
+    monkeypatch.setattr(cal, "try_native", permission_error)
+    _mk_run(monkeypatch, json.dumps([{"name": "Work", "uid": "Work", "writable": True}]))
+
+    out = cal.calendar_list_calendars()
+
+    assert out[0]["uid"] == "Work"
+    assert out[0]["default_candidate"] is True
 
 
 def test_calendar_create_all_day_event_uses_day_bounds(monkeypatch):

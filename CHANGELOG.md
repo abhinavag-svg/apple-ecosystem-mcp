@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.1.1 - 2026-06-30
+
+### Calendar Reliability
+
+- Made Calendar operations fall back to AppleScript on recoverable native Calendar permission and backend errors.
+- Launched Calendar before AppleScript Calendar access so fallback paths can trigger macOS permission and app readiness behavior more reliably.
+- Bounded broad Calendar event scans by limit and skipped slow calendars instead of letting one calendar stall the full lookup.
+- Removed attendee expansion from the Calendar list fallback path to keep broad availability checks responsive.
+- Added a guard so Calendar does not report an empty result when every fallback calendar timed out.
+
+### Release Packaging
+
+- Signed the bundled native helper with a stable ad-hoc bundle identifier during MCPB builds.
+- Aligned the release script with `make build` so local and published MCPB artifacts use the same bundle assembly path.
+- Added regression coverage for helper signing and Calendar fallback/timeout behavior.
+
 ## v1.1.0 - 2026-06-28
 
 ### MCPB Installability
@@ -34,4 +50,3 @@
 - Updated README install language around the primary MCPB path, Node launcher compatibility, and future UV bundle.
 - Preserved the README screenshot added directly on GitHub before this release.
 - Updated the release guide and release script to validate the Node-runtime MCPB and build the helper with embedded permission metadata.
-

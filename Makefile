@@ -2,12 +2,14 @@
 
 BUNDLE_ROOT_FILES = manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json
 NODE_BUNDLE_ROOT_FILES = manifest.node.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json
+HELPER_BUNDLE_ID = com.abhinavagrawal.apple-ecosystem-mcp.helper
 HELPER_SWIFTC = CLANG_MODULE_CACHE_PATH=/private/tmp/apple-ecosystem-clang-cache swiftc native/apple-ecosystem-helper.swift \
 	-Xlinker -sectcreate \
 	-Xlinker __TEXT \
 	-Xlinker __info_plist \
 	-Xlinker native/apple-ecosystem-helper.Info.plist \
 	-o native/build/apple-ecosystem-helper
+SIGN_HELPER = codesign --force --sign - --identifier $(HELPER_BUNDLE_ID) native/build/apple-ecosystem-helper
 
 help:
 	@echo "Apple Ecosystem MCP"
@@ -32,6 +34,7 @@ build:
 	rm -rf mcpb
 	mkdir -p native/build
 	$(HELPER_SWIFTC)
+	$(SIGN_HELPER)
 	mkdir -p mcpb/contents
 	mkdir -p mcpb/contents/bin
 	mkdir -p mcpb/contents/server
@@ -53,6 +56,7 @@ build-uv-mcpb:
 	rm -rf mcpb-uv
 	mkdir -p native/build
 	$(HELPER_SWIFTC)
+	$(SIGN_HELPER)
 	mkdir -p mcpb-uv/contents
 	mkdir -p mcpb-uv/contents/bin
 	cp manifest.uv.json mcpb-uv/contents/manifest.json
@@ -69,6 +73,7 @@ build-node-mcpb:
 	rm -rf mcpb-node
 	mkdir -p native/build
 	$(HELPER_SWIFTC)
+	$(SIGN_HELPER)
 	mkdir -p mcpb-node/contents
 	mkdir -p mcpb-node/contents/bin
 	mkdir -p mcpb-node/contents/server

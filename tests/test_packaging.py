@@ -49,6 +49,13 @@ def test_node_manifest_is_separate_node_runtime():
     assert manifest["compatibility"]["runtimes"]["node"] == ">=18.0.0"
 
 
+def test_makefile_signs_native_helper_with_stable_bundle_id():
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "HELPER_BUNDLE_ID = com.abhinavagrawal.apple-ecosystem-mcp.helper" in makefile
+    assert "codesign --force --sign - --identifier $(HELPER_BUNDLE_ID)" in makefile
+
+
 def test_uv_bundle_validator_accepts_expected_archive(tmp_path):
     bundle_path = tmp_path / "apple-ecosystem-mcp.mcpb"
     with zipfile.ZipFile(bundle_path, "w") as bundle:
