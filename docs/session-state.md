@@ -3,11 +3,26 @@
 Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
-- **Last changed:** 2026-06-10
-- **Current version:** v0.6.0 (GitHub MCPB release)
-- **Next TODO:** Live-test the installed v0.6.0 MCPB in Claude Desktop with real Mail and Notes data, then continue the separate Mail rework plan for true chronological inbox queries.
+- **Last changed:** 2026-06-30
+- **Current version:** v1.1.1 (GitHub MCPB release)
+- **Next TODO:** Install the v1.1.1 MCPB in Claude Desktop and smoke-test Calendar fallback behavior, then continue polishing the native companion UX and any Anthropic submission follow-up.
 
 ## Session Log
+
+### Session 8 (2026-06-30, Calendar reliability patch release wrap-up)
+- **What changed:**
+  - Released v1.1.1 for Calendar reliability and native-helper signing.
+  - Published the missing GitHub Release for the existing v1.1.1 tag and uploaded the validated `apple-ecosystem-mcp.mcpb` asset.
+  - Confirmed the shipped MCPB manifest is version 1.1.1 and uses the Node launcher entrypoint expected by Claude Desktop.
+- **Verification:**
+  - Local bundle validation: `python3 scripts/validate_mcpb.py --mode node mcpb/apple-ecosystem-mcp.mcpb`.
+  - GitHub release verification: `gh release view v1.1.1 --json tagName,name,isDraft,isPrerelease,publishedAt,assets,url`.
+- **Blockers:**
+  - Installed Claude Desktop smoke testing still needs to be done manually against real local Calendar permissions/data.
+- **Next steps:**
+  - Install the v1.1.1 MCPB in Claude Desktop.
+  - Smoke-test `calendar_list_events`, `calendar_get_event`, `apple_inventory`, and a couple of read-only non-Calendar tools.
+  - Continue native companion UX polish and any Anthropic submission follow-up from the v1.1.0 track.
 
 ### Session 7 (2026-06-28, MCPB installability, Node compatibility, and permission UX release)
 - **What changed:**
