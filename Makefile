@@ -1,8 +1,10 @@
-.PHONY: help install test build build-node-mcpb build-uv-mcpb build-companion-app release clean
+.PHONY: help install test build build-self-contained-mcpb build-node-mcpb build-uv-mcpb build-companion-app release clean
 
-BUNDLE_ROOT_FILES = manifest.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json
+SELF_CONTAINED_BUNDLE_ROOT_FILES = manifest.json logo.svg README.md PRIVACY.md LICENSE
 NODE_BUNDLE_ROOT_FILES = manifest.node.json logo.svg README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json
 HELPER_BUNDLE_ID = com.abhinavagrawal.apple-ecosystem-mcp.helper
+SERVER_BUNDLE_ID = com.abhinavagrawal.apple-ecosystem-mcp.server
+PYINSTALLER_TARGET_ARCH ?= $(shell uname -m)
 HELPER_SWIFTC = CLANG_MODULE_CACHE_PATH=/private/tmp/apple-ecosystem-clang-cache swiftc native/apple-ecosystem-helper.swift \
 	-Xlinker -sectcreate \
 	-Xlinker __TEXT \
@@ -16,8 +18,9 @@ help:
 	@echo ""
 	@echo "  make install          Install Python dependencies"
 	@echo "  make test             Run non-live tests"
-	@echo "  make build            Build local Node-runtime MCPB bundle"
-	@echo "  make build-node-mcpb  Build local Node-wrapper MCPB bundle"
+	@echo "  make build            Build self-contained binary MCPB bundle"
+	@echo "  make build-self-contained-mcpb  Build self-contained binary MCPB bundle"
+	@echo "  make build-node-mcpb  Build legacy Node-wrapper MCPB bundle"
 	@echo "  make build-uv-mcpb    Build future UV-runtime MCPB bundle"
 	@echo "  make build-companion-app  Build local macOS companion app"
 	@echo "  make release VERSION=X.Y.Z"
@@ -30,26 +33,34 @@ install:
 test:
 	UV_CACHE_DIR=.uv-cache uv run pytest tests/ -k "not live" -v
 
-build:
+build: build-self-contained-mcpb
+
+build-self-contained-mcpb:
 	rm -rf mcpb
+	rm -rf build dist apple-ecosystem-mcp.spec
 	mkdir -p native/build
 	$(HELPER_SWIFTC)
 	$(SIGN_HELPER)
+	env UV_CACHE_DIR=/private/tmp/uv-cache uv run pyinstaller \
+		--clean \
+		--noconfirm \
+		--onedir \
+		--name apple-ecosystem-mcp \
+		--paths src \
+		--copy-metadata fastmcp \
+		--copy-metadata mcp \
+		--target-arch $(PYINSTALLER_TARGET_ARCH) \
+		scripts/pyinstaller_entry.py
+	codesign --force --sign - --identifier $(SERVER_BUNDLE_ID) dist/apple-ecosystem-mcp/apple-ecosystem-mcp
 	mkdir -p mcpb/contents
 	mkdir -p mcpb/contents/bin
-	mkdir -p mcpb/contents/server
-	mkdir -p mcpb/contents/node_modules
-	cp $(BUNDLE_ROOT_FILES) mcpb/contents/
-	cp -r src mcpb/contents/
-	cp server/runner.py mcpb/contents/server/
-	cp node/server/node-launcher.mjs mcpb/contents/server/
-	env UV_CACHE_DIR=/private/tmp/uv-cache uv run python scripts/vendor_python_deps.py mcpb/contents/server/lib
+	cp $(SELF_CONTAINED_BUNDLE_ROOT_FILES) mcpb/contents/
+	cp dist/apple-ecosystem-mcp/apple-ecosystem-mcp mcpb/contents/bin/
+	cp -R dist/apple-ecosystem-mcp/_internal mcpb/contents/bin/
 	cp native/build/apple-ecosystem-helper mcpb/contents/bin/
-	rm -rf mcpb/contents/.venv
 	find mcpb/contents -name .DS_Store -delete
-	find mcpb/contents -type d -name __pycache__ -prune -exec rm -rf {} +
 	cd mcpb/contents && zip -X -q -r ../apple-ecosystem-mcp.mcpb .
-	python3 scripts/validate_mcpb.py --mode node mcpb/apple-ecosystem-mcp.mcpb
+	python3 scripts/validate_mcpb.py --mode binary mcpb/apple-ecosystem-mcp.mcpb
 	@ls -lh mcpb/apple-ecosystem-mcp.mcpb
 
 build-uv-mcpb:

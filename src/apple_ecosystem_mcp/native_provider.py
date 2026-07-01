@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +52,15 @@ def helper_path() -> Path:
 
     here = Path(__file__).resolve()
     candidates: list[Path] = []
+    if getattr(sys, "frozen", False):
+        executable_dir = Path(sys.executable).resolve().parent
+        candidates.extend(
+            [
+                executable_dir / HELPER_NAME,
+                executable_dir.parent / "bin" / HELPER_NAME,
+            ]
+        )
+
     for parent in here.parents:
         candidates.extend(
             [

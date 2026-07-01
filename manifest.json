@@ -2,7 +2,7 @@
   "manifest_version": "0.4",
   "name": "apple-ecosystem-mcp",
   "display_name": "Apple Ecosystem",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive",
   "author": {
     "name": "Abhinav Agrawal",
@@ -14,18 +14,16 @@
     "url": "https://github.com/abhinavag-svg/apple-ecosystem-mcp.git"
   },
   "server": {
-    "type": "node",
-    "entry_point": "server/node-launcher.mjs",
+    "type": "binary",
+    "entry_point": "bin/apple-ecosystem-mcp",
     "mcp_config": {
-      "command": "node",
-      "args": ["${__dirname}/server/node-launcher.mjs"]
+      "command": "${__dirname}/bin/apple-ecosystem-mcp",
+      "args": [],
+      "env": {}
     }
   },
   "compatibility": {
-    "platforms": ["darwin"],
-    "runtimes": {
-      "node": ">=18.0.0"
-    }
+    "platforms": ["darwin"]
   },
   "privacy_policies": [
     "https://github.com/abhinavag-svg/apple-ecosystem-mcp/blob/main/PRIVACY.md"

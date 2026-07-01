@@ -75,12 +75,69 @@ def _assert_no_host_commands(manifest: dict[str, Any]) -> None:
         raise ValueError("uv MCPB must not invoke absolute local paths")
 
 
+def _assert_no_host_runtime_commands(manifest: dict[str, Any]) -> None:
+    server = manifest.get("server")
+    if not isinstance(server, dict):
+        raise ValueError("manifest server must be an object")
+    mcp_config = server.get("mcp_config")
+    if not isinstance(mcp_config, dict):
+        raise ValueError("binary MCPB must define server.mcp_config")
+    values = [str(server.get("entry_point", "")), str(mcp_config.get("command", ""))]
+    values.extend(str(arg) for arg in mcp_config.get("args", []) if arg is not None)
+    forbidden = {"node", "python", "python3", "uv"}
+    if any(value in forbidden for value in values):
+        raise ValueError("binary MCPB must not invoke host node, python, python3, or uv")
+
+
 def _assert_author_points_to_github(manifest: dict[str, Any]) -> None:
     author = manifest.get("author")
     if not isinstance(author, dict):
         raise ValueError("manifest author must be an object")
     if author.get("url") != AUTHOR_GITHUB_URL:
         raise ValueError(f"manifest author.url must be {AUTHOR_GITHUB_URL}")
+
+
+def validate_binary_bundle(bundle: zipfile.ZipFile) -> None:
+    names = set(bundle.namelist())
+    manifest = _read_manifest(bundle)
+    server = manifest.get("server")
+    compatibility = manifest.get("compatibility")
+    if not isinstance(server, dict):
+        raise ValueError("manifest server must be an object")
+    if not isinstance(compatibility, dict):
+        raise ValueError("manifest compatibility must be an object")
+    if manifest.get("manifest_version") != "0.4":
+        raise ValueError("manifest_version must be 0.4")
+    _assert_author_points_to_github(manifest)
+    if server.get("type") != "binary":
+        raise ValueError("server.type must be binary")
+    if server.get("entry_point") != "bin/apple-ecosystem-mcp":
+        raise ValueError("server.entry_point must point at bin/apple-ecosystem-mcp")
+    mcp_config = server.get("mcp_config")
+    if not isinstance(mcp_config, dict):
+        raise ValueError("binary MCPB must define server.mcp_config")
+    if mcp_config.get("command") != "${__dirname}/bin/apple-ecosystem-mcp":
+        raise ValueError(
+            "binary MCPB server.mcp_config.command must point at ${__dirname}/bin/apple-ecosystem-mcp"
+        )
+    runtimes = compatibility.get("runtimes")
+    if runtimes:
+        raise ValueError("binary MCPB must not declare host runtimes")
+    _assert_no_host_runtime_commands(manifest)
+    _assert_present(
+        names,
+        [
+            "manifest.json",
+            "README.md",
+            "PRIVACY.md",
+            "LICENSE",
+            "logo.svg",
+            "bin/apple-ecosystem-mcp",
+            "bin/_internal/",
+            "bin/apple-ecosystem-helper",
+        ],
+    )
+    _assert_forbidden_paths(names)
 
 
 def validate_uv_bundle(bundle: zipfile.ZipFile) -> None:
@@ -159,12 +216,14 @@ def validate_node_bundle(bundle: zipfile.ZipFile) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Validate Apple Ecosystem MCPB bundles")
     parser.add_argument("bundle", type=Path)
-    parser.add_argument("--mode", choices=["uv", "node"], required=True)
+    parser.add_argument("--mode", choices=["binary", "uv", "node"], required=True)
     args = parser.parse_args(argv)
 
     try:
         with zipfile.ZipFile(args.bundle) as bundle:
-            if args.mode == "uv":
+            if args.mode == "binary":
+                validate_binary_bundle(bundle)
+            elif args.mode == "uv":
                 validate_uv_bundle(bundle)
             else:
                 validate_node_bundle(bundle)

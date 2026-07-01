@@ -3,11 +3,45 @@
 Updated automatically at end of each session. Tracks progress across days.
 
 ## Current Status
-- **Last changed:** 2026-06-30
-- **Current version:** v1.1.1 (GitHub MCPB release)
-- **Next TODO:** Install the v1.1.1 MCPB in Claude Desktop and smoke-test Calendar fallback behavior, then continue polishing the native companion UX and any Anthropic submission follow-up.
+- **Last changed:** 2026-07-01
+- **Current version:** v1.1.2
+- **Next TODO:** Produce a future Intel or Universal2 release artifact. The current public v1.1.2 MCPB is Apple Silicon-only.
+
+### Session 10 (2026-07-01, v1.1.2 release)
+- **What changed:**
+  - Released v1.1.2 as the first self-contained MCPB build that no longer depends on user-installed Python, Node.js, or `uv` for the primary Claude Desktop path.
+  - Updated the primary binary manifest to include the MCPB `server.mcp_config` required by the current v0.4 schema.
+  - Added an explicit Apple Silicon-only release note and README callout so the architecture limitation is visible before install.
+- **Verification:**
+  - Local bundle validation: `python3 scripts/validate_mcpb.py --mode binary mcpb/apple-ecosystem-mcp.mcpb`.
+  - Packaged MCPB smoke test: extracted the `.mcpb`, launched `bin/apple-ecosystem-mcp`, and verified `initialize` plus `tools/list`.
+  - Non-live suite: `393 passed, 9 skipped` via `env UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/ -q`.
+  - Manual Apple Silicon validation: Claude Desktop successfully returned `apple_inventory` output plus follow-up Calendar and Mail usage after macOS permissions were granted in-session.
+- **Blockers:**
+  - The released artifact is arm64-only; Intel Mac support is deferred to a future release.
+- **Next steps:**
+  - Build either a Universal2 or a dedicated Intel artifact for a future release.
+  - Investigate why the current Claude log files did not reliably capture the successful post-permission live session.
 
 ## Session Log
+
+### Session 9 (2026-07-01, self-contained MCPB test candidate)
+- **What changed:**
+  - Prepared v1.1.2 as a local-only patch test candidate for out-of-the-box installability.
+  - Replaced the primary MCPB runtime contract with a bundled binary server entrypoint so the default install path no longer depends on user-installed Python, Node.js, `uv`, or shell `PATH`.
+  - Added PyInstaller to the dev dependency group for reproducible local binary builds.
+  - Updated MCPB validation and packaging tests for the self-contained binary bundle.
+  - Kept Node and uv manifests as secondary compatibility/reference targets only.
+  - Built `mcpb/apple-ecosystem-mcp.mcpb` as a 34 MB arm64 local test artifact.
+- **Verification:**
+  - Local bundle validation: `python3 scripts/validate_mcpb.py --mode binary mcpb/apple-ecosystem-mcp.mcpb`.
+  - Packaged MCPB smoke test: extracted the `.mcpb`, launched `bin/apple-ecosystem-mcp`, and verified `initialize` plus `tools/list`.
+  - Non-live suite: `393 passed, 9 skipped` via `env UV_CACHE_DIR=/private/tmp/uv-cache uv run pytest tests/ -q`.
+- **Blockers:**
+  - Universal2 release readiness still needs a Universal2-capable Python toolchain; the local Python framework used for this build is arm64-only, so the current artifact is Apple Silicon only.
+- **Next steps:**
+  - Quit Claude Desktop, remove the installed Apple Ecosystem extension copy, clear the Apple Ecosystem Claude/server logs, reinstall the local `mcpb/apple-ecosystem-mcp.mcpb`, and verify attach plus `apple_inventory`.
+  - Do not tag, push, or create the GitHub Release until manual install testing passes.
 
 ### Session 8 (2026-06-30, Calendar reliability patch release wrap-up)
 - **What changed:**

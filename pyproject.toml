@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "apple-ecosystem-mcp"
-version = "1.1.1"
+version = "1.1.2"
 description = "MCP server for Apple Mail, Calendar, Contacts, Reminders, Notes, and iCloud Drive."
 readme = "README.md"
 license = { text = "MIT" }
@@ -38,7 +38,11 @@ apple-ecosystem-mcp = "apple_ecosystem_mcp.__main__:main"
 packages = ["src/apple_ecosystem_mcp"]
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-mock>=3"]
+dev = [
+    "pyinstaller>=6",
+    "pytest>=8",
+    "pytest-mock>=3",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

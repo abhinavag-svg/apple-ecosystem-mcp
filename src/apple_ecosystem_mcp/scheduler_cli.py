@@ -29,7 +29,10 @@ def get_launch_agent_plist_path() -> Path:
 
 
 def build_launch_agent_plist() -> dict[str, object]:
-    program_arguments = [sys.executable, "-m", "apple_ecosystem_mcp", "schedule", "run"]
+    if getattr(sys, "frozen", False):
+        program_arguments = [sys.executable, "schedule", "run"]
+    else:
+        program_arguments = [sys.executable, "-m", "apple_ecosystem_mcp", "schedule", "run"]
     return {
         "Label": LAUNCHD_LABEL,
         "ProgramArguments": program_arguments,

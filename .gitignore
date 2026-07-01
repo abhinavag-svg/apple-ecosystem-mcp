@@ -9,6 +9,7 @@ mcpb/*.mcpb
 *.mcpb
 *.dxt
 *.egg-info/
+*.spec
 node_modules/
 
 # Environment & Secrets

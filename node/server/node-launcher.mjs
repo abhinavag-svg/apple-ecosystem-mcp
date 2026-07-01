@@ -59,7 +59,7 @@ const pythonPath = [srcPath, libPath, process.env.PYTHONPATH].filter(Boolean).jo
 const selectedVersion = pythonVersion(pythonCommand);
 console.error(
   [
-    "Apple Ecosystem MCP launcher starting",
+    "Apple Ecosystem MCP compatibility launcher starting",
     `root=${root}`,
     `python=${pythonCommand}`,
     `python_version=${selectedVersion ? `${selectedVersion.major}.${selectedVersion.minor}` : "unknown"}`,
@@ -88,7 +88,7 @@ child.stderr.pipe(process.stderr);
 child.on("error", (error) => {
   console.error(
     [
-      "Apple Ecosystem MCP Node launcher could not start the Python tool engine.",
+      "Apple Ecosystem MCP Node compatibility launcher could not start the Python tool engine.",
       `Tried to run: ${pythonCommand} -m apple_ecosystem_mcp`,
       `PYTHONPATH included: ${pythonPath}`,
       "Install Python 3 or set APPLE_ECOSYSTEM_MCP_PYTHON_COMMAND to a Python 3 interpreter.",

@@ -81,3 +81,16 @@ def test_helper_path_missing_override(monkeypatch, tmp_path):
 
     with pytest.raises(native_provider.NativeProviderUnavailable):
         native_provider.helper_path()
+
+
+def test_helper_path_checks_frozen_executable_directory(monkeypatch, tmp_path):
+    helper = tmp_path / native_provider.HELPER_NAME
+    helper.write_text("#!/bin/sh\n", encoding="utf-8")
+    helper.chmod(helper.stat().st_mode | stat.S_IXUSR)
+
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_PROVIDER", "native")
+    monkeypatch.delenv("APPLE_ECOSYSTEM_MCP_HELPER_PATH", raising=False)
+    monkeypatch.setattr(native_provider.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(native_provider.sys, "executable", str(tmp_path / "apple-ecosystem-mcp"))
+
+    assert native_provider.helper_path() == helper

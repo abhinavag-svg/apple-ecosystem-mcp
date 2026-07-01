@@ -65,6 +65,7 @@ def test_schedule_run_can_target_named_task(monkeypatch):
 def test_launch_agent_plist_is_rendered_deterministically(monkeypatch, tmp_path):
     monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_LAUNCHAGENTS_DIR", str(tmp_path))
     monkeypatch.setattr(scheduler_cli.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(scheduler_cli.sys, "frozen", False, raising=False)
 
     plist = scheduler_cli.build_launch_agent_plist()
 
@@ -88,6 +89,17 @@ def test_launch_agent_plist_is_rendered_deterministically(monkeypatch, tmp_path)
     rendered = scheduler_cli.render_launch_agent_plist()
     assert "<key>Label</key>" in rendered
     assert scheduler_cli.LAUNCHD_LABEL in rendered
+
+
+def test_launch_agent_plist_uses_frozen_executable(monkeypatch, tmp_path):
+    executable = tmp_path / "apple-ecosystem-mcp"
+    monkeypatch.setenv("APPLE_ECOSYSTEM_MCP_LAUNCHAGENTS_DIR", str(tmp_path))
+    monkeypatch.setattr(scheduler_cli.sys, "executable", str(executable))
+    monkeypatch.setattr(scheduler_cli.sys, "frozen", True, raising=False)
+
+    plist = scheduler_cli.build_launch_agent_plist()
+
+    assert plist["ProgramArguments"] == [str(executable), "schedule", "run"]
 
 
 def test_schedule_install_writes_plist_and_bootstraps(monkeypatch, tmp_path):

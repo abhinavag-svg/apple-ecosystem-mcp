@@ -17,7 +17,7 @@ verify_bundle_contents() {
     local listing
     listing=$(unzip -Z1 "$bundle")
 
-    for required in manifest.json README.md PRIVACY.md LICENSE pyproject.toml uv.lock package.json package-lock.json server/node-launcher.mjs src/apple_ecosystem_mcp/__main__.py bin/apple-ecosystem-helper; do
+    for required in manifest.json README.md PRIVACY.md LICENSE bin/apple-ecosystem-mcp bin/apple-ecosystem-helper; do
         if ! echo "$listing" | grep -qx "$required"; then
             echo "❌ ERROR: Required bundle file missing: $required"
             exit 1
@@ -74,7 +74,7 @@ echo ""
 echo "📦 Building MCPB bundle..."
 make build
 verify_bundle_contents "mcpb/apple-ecosystem-mcp.mcpb"
-python3 scripts/validate_mcpb.py --mode node mcpb/apple-ecosystem-mcp.mcpb
+python3 scripts/validate_mcpb.py --mode binary mcpb/apple-ecosystem-mcp.mcpb
 echo "✅ MCPB bundle created"
 echo ""
 
@@ -94,17 +94,19 @@ echo ""
 # Create GitHub release
 echo "🚀 Creating GitHub release..."
 gh release create "v$VERSION" \
-    --title "v$VERSION — Calendar Reliability And Helper Signing" \
-    --notes "Apple Ecosystem MCP v$VERSION focuses on Calendar reliability and shipping the native helper with a stable ad-hoc signing identity.
+    --title "v$VERSION — Self-Contained MCPB Installability" \
+    --notes "Apple Ecosystem MCP v$VERSION focuses on out-of-the-box Claude Desktop installability with a self-contained macOS MCPB bundle.
+
+**Apple Silicon requirement:** this v$VERSION release artifact is for Apple Silicon (`arm64`) Macs.
+
+**Intel Mac support is not included in this release yet and will come in a future release.**
 
 Highlights:
-- Signs the bundled native helper with a stable ad-hoc bundle identifier during local and release builds.
-- Aligns the release script with the canonical make build bundle path so release artifacts match local validation.
-- Lets Calendar tools fall back to AppleScript on recoverable native Calendar permission/backend errors.
-- Launches Calendar before AppleScript Calendar access to make permission prompting and fallback behavior more reliable.
-- Bounds broad Calendar event scans and avoids attendee expansion in the fallback list path for better responsiveness.
-- Refuses to report an empty Calendar result when all fallback calendars timed out.
-- Adds regression coverage for Calendar fallback, timeout, limit, and helper-signing behavior.
+- Ships the primary MCPB as a bundled binary runtime instead of a Node wrapper around host Python.
+- Removes the need for users to install Python, Node.js, or uv for the primary Claude Desktop bundle.
+- Keeps the existing Apple Ecosystem tool surface unchanged.
+- Keeps the bundled native helper signed with a stable ad-hoc bundle identifier.
+- Adds package validation and smoke coverage for the self-contained artifact.
 
 Install the attached apple-ecosystem-mcp.mcpb in Claude Desktop. See README.md for setup, permissions, troubleshooting, and support."
 echo ""
